@@ -243,13 +243,23 @@ GitHub: @majidpm
 Issues & Support
 Report Issue: GitHub Issues
 --------
-⭐ Show Your Support
-If you found this project helpful, please consider:
+## 💰 Donate
 
-Starring the repository ⭐
+If you find this project useful, you can support it by sending USDC on Base Network:
 
-Sharing with others 📤
+| Network | Token | Address |
+|---------|-------|---------|
+| **Base** | USDC | `0x4D0ce11bafE6fCBD4506A24B52D2b63b688C8332` |
 
-Contributing to the project 🤝
+> ⚠️ Make sure you're on **Base Network**. Sending to the wrong network may result in loss of funds.
+
+**Other ways to support:**
+- ⭐ Star this repo
+- 📤 Share with others
+- 🐛 Report issues
+
+---
 
 Made with ❤️ on Base Network
+
+
