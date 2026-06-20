@@ -1,59 +1,69 @@
-PayOnBase24 💰
-Instant USDC Payment Links on Base Network
+# PayOnBase 💰
 
-https://img.shields.io/badge/License-MIT-yellow.svg
-https://img.shields.io/badge/Built%2520with-React-61DAFB?logo=react
-https://img.shields.io/badge/Built%2520with-Vite-646CFF?logo=vite
-https://img.shields.io/badge/Network-Base-0052FF?logo=ethereum
-https://img.shields.io/badge/Backend-Supabase-3ECF8E?logo=supabase
+> Instant USDC Payment Links on Base Network
 
-📖 About
-PayOnBase24 is a simple and secure platform for creating instant USDC payment links on the Base Network.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Built with React](https://img.shields.io/badge/Built%20with-React-61DAFB?logo=react)](https://reactjs.org/)
+[![Built with Vite](https://img.shields.io/badge/Built%20with-Vite-646CFF?logo=vite)](https://vitejs.dev/)
+[![Network](https://img.shields.io/badge/Network-Base-0052FF?logo=ethereum)](https://base.org/)
+[![Backend](https://img.shields.io/badge/Backend-Supabase-3ECF8E?logo=supabase)](https://supabase.com/)
+[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?logo=vercel)](https://vercel.com/)
 
-🔗 Create payment links in seconds
+---
 
-💳 Payers don't need an account — just connect wallet & pay
+## 📖 About
 
-🔒 Fully secure with wallet signing & RLS policies
+**PayOnBase** is a simple and secure platform for creating instant USDC payment links on the **Base Network**. 
 
-🌙 Dark/Light mode support
+Whether you're a freelancer, business owner, or just someone who needs to receive payments quickly, PayOnBase makes it easy:
 
-📱 QR Code for mobile payments
+- 🔗 Create payment links in seconds
+- 💳 Payers don't need an account — just connect wallet & pay
+- 🔒 Fully secure with wallet signing & RLS policies
+- 🌙 Dark/Light mode support
+- 📱 QR Code for mobile payments
 
-✨ Features
-Feature	Description
-🔐 Authentication	Sign up / Login with Supabase
-📝 Create Links	Generate unique payment links with amount & recipient
-📊 Dashboard	Manage all your payment links with QR codes
-💳 Payments	Connect wallet, sign, and pay USDC instantly
-🔒 Security	Wallet signing with 1-hour validity, RLS policies
-⚙️ Settings	Update profile name & security settings
-🌙 Theme	Light / Dark mode with persistent storage
-📱 QR Code	Scan with phone for easy payments
-🛠️ Tech Stack
+---
 
-Frontend
+## ✨ Features
 
-### Technology	Description
+| Feature | Description |
+|---------|-------------|
+| 🔐 **Authentication** | Sign up / Login with Supabase |
+| 📝 **Create Links** | Generate unique payment links with amount & recipient |
+| 📊 **Dashboard** | Manage all your payment links with QR codes |
+| 💳 **Payments** | Connect wallet, sign, and pay USDC instantly |
+| 🔒 **Security** | Wallet signing with 1-hour validity, RLS policies |
+| ⚙️ **Settings** | Update profile name & security settings |
+| 🌙 **Theme** | Light / Dark mode with persistent storage |
+| 📱 **QR Code** | Scan with phone for easy payments |
+| 🛡️ **Anti-spam** | Rate limiting to prevent abuse |
 
-⚛️ React 18	UI Framework
-⚡ Vite	Build Tool
-🎨 Tailwind CSS	Styling
-🔀 React Router	Navigation
-🟣 Ethers.js	Blockchain Interaction
+---
+## 🛠️ Tech Stack
 
-Backend
+### Frontend
+| Technology | Description |
+|------------|-------------|
+| ⚛️ **React 18** | UI Framework |
+| ⚡ **Vite** | Build Tool |
+| 🎨 **Tailwind CSS** | Styling |
+| 🔀 **React Router** | Navigation |
+| 🟣 **Ethers.js** | Blockchain Interaction |
+| 📦 **React QR Code** | QR Code generation |
 
-###Technology	Description
-🗄️ Supabase	Authentication & Database
-🔐 RLS	Row Level Security Policies
-📦 PostgreSQL	Database
+### Backend
+| Technology | Description |
+|------------|-------------|
+| 🗄️ **Supabase** | Authentication & Database |
+| 🔐 **RLS** | Row Level Security Policies |
+| 📦 **PostgreSQL** | Database |
 
-Blockchain
-
-### Technology	Description
-⛓️ Base Network	Layer 2 Ethereum
-💵 USDC	Payment Token
+### Blockchain
+| Technology | Description |
+|------------|-------------|
+| ⛓️ **Base Network** | Layer 2 Ethereum |
+| 💵 **USDC** | Payment Token |
 
 
 ###🚀 Quick Start
