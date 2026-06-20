@@ -283,3 +283,24 @@ Tailwind CSS — Utility-first CSS framework
 Ethers.js — Ethereum library
 
 React — UI framework
+
+--------
+###  📬 Contact
+Project Links
+GitHub: https://github.com/majidpm/payonbase
+
+Social Media
+Twitter/X: @pmnmajid
+Email: majid.pmn1@gmail.com
+
+------
+⭐ Show Your Support
+If you found this project helpful, please consider:
+
+Starring the repository ⭐
+
+Sharing with others 📤
+
+Contributing to the project 🤝
+
+-----
