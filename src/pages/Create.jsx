@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { v4 as uuidv4 } from 'uuid';
-import Navbar from '../components/Navbar';
 import { useTheme } from '../contexts/ThemeContext';
 
 export default function Create() {
@@ -70,11 +69,8 @@ export default function Create() {
   }
 
   return (
-    <div className={`min-h-screen transition-colors duration-300 ${
-      isDark ? 'bg-gray-950' : 'bg-blue-50'
-    }`}>
-      <Navbar />
-      <div className="max-w-md w-full mx-auto pt-8 sm:pt-16 pb-20 px-4">
+    <div className="p-4 sm:p-6 md:p-8">
+      <div className="max-w-md w-full mx-auto">
         <div className="text-center mb-8 sm:mb-10">
           <h1 className={`text-3xl sm:text-5xl font-bold mb-4 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-gray-900'
@@ -138,8 +134,8 @@ export default function Create() {
                   addressError
                     ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
                     : isDark
-                    ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
-                    : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+                      ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+                      : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
                 }`}
               />
             </div>

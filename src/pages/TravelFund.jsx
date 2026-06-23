@@ -43,7 +43,7 @@ export default function TravelFund() {
   function validateWalletAddress(address) {
     if (!address) return 'Wallet address is required';
     const ethRegex = /^0x[a-fA-F0-9]{40}$/;
-    if (!ethRegex.test(address)) return 'Invalid Ethereum address (must start with 0x and be 42 characters)';
+    if (!ethRegex.test(address)) return 'Invalid Ethereum address';
     return '';
   }
 
@@ -52,7 +52,6 @@ export default function TravelFund() {
     const num = parseFloat(value);
     if (isNaN(num)) return `${fieldName} must be a number`;
     if (num <= 0) return `${fieldName} must be greater than 0`;
-    if (num > 1000000000) return `${fieldName} is too large`;
     return '';
   }
 
@@ -63,26 +62,17 @@ export default function TravelFund() {
     return '';
   }
 
-  // ============================================
-  // FUND VALIDATION
-  // ============================================
-
   function validateFund() {
     const errors = {};
-    
     const titleError = validateRequired(newFund.title, 'Title', 3, 100);
     if (titleError) errors.title = titleError;
-
     const amountError = validatePositiveNumber(newFund.target_amount, 'Target amount');
     if (amountError) errors.target_amount = amountError;
-
     const walletError = validateWalletAddress(newFund.wallet_address);
     if (walletError) errors.wallet_address = walletError;
-
     if (newFund.description && newFund.description.length > 500) {
       errors.description = 'Description must be less than 500 characters';
     }
-
     setFundErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -90,72 +80,47 @@ export default function TravelFund() {
   function validateDonate(fundId) {
     const errors = {};
     const amount = donateAmount[fundId];
-    
     if (!amount) {
       errors.amount = 'Amount is required';
     } else {
       const num = parseFloat(amount);
       if (isNaN(num) || num <= 0) errors.amount = 'Amount must be greater than 0';
-      if (num > 1000000) errors.amount = 'Amount is too large';
     }
-
     const name = donateName[fundId];
-    if (name && name.length > 50) {
-      errors.name = 'Name must be less than 50 characters';
-    }
-
+    if (name && name.length > 50) errors.name = 'Name must be less than 50 characters';
     setDonateErrors(prev => ({ ...prev, [fundId]: errors }));
     return Object.keys(errors).length === 0;
   }
 
-  // ============================================
-  // SPLIT VALIDATION
-  // ============================================
-
   function validateSplit() {
     const errors = {};
-    
     const titleError = validateRequired(newSplit.title, 'Title', 3, 100);
     if (titleError) errors.title = titleError;
-
     const hostError = validateRequired(newSplit.host_name, 'Host name', 2, 50);
     if (hostError) errors.host_name = hostError;
-
     setSplitErrors(errors);
     return Object.keys(errors).length === 0;
   }
 
   function validateMember() {
     const errors = {};
-    
     const nameError = validateRequired(newMember.name, 'Member name', 2, 50);
     if (nameError) errors.name = nameError;
-
     if (newMember.pre_paid !== '') {
       const num = parseFloat(newMember.pre_paid);
-      if (isNaN(num) || num < 0) {
-        errors.pre_paid = 'Pre-paid amount must be 0 or greater';
-      }
-      if (num > 1000000000) {
-        errors.pre_paid = 'Pre-paid amount is too large';
-      }
+      if (isNaN(num) || num < 0) errors.pre_paid = 'Pre-paid must be 0 or greater';
     }
-
     setMemberErrors(errors);
     return Object.keys(errors).length === 0;
   }
 
   function validateExpense() {
     const errors = {};
-    
     const descError = validateRequired(newExpense.description, 'Description', 2, 200);
     if (descError) errors.description = descError;
-
     const amountError = validatePositiveNumber(newExpense.amount, 'Amount');
     if (amountError) errors.amount = amountError;
-
     if (!newExpense.paid_by) errors.paid_by = 'Please select who paid';
-
     setExpenseErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -180,10 +145,6 @@ export default function TravelFund() {
     if (user) setUserId(user.id);
     setLoading(false);
   }
-
-  // ============================================
-  // FUND FUNCTIONS
-  // ============================================
 
   async function loadFunds() {
     try {
@@ -212,7 +173,6 @@ export default function TravelFund() {
 
   async function createFund() {
     if (!validateFund()) return;
-
     try {
       const { error } = await supabase
         .from('travel_funds')
@@ -254,10 +214,8 @@ export default function TravelFund() {
 
   async function donateToFund(fundId) {
     if (!validateDonate(fundId)) return;
-    
     const amount = donateAmount[fundId];
     const name = donateName[fundId] || 'Anonymous';
-
     const fund = funds.find(f => f.id === fundId);
     if (!fund) return;
 
@@ -306,10 +264,6 @@ export default function TravelFund() {
       setDonating(false);
     }
   }
-
-  // ============================================
-  // SPLIT FUNCTIONS
-  // ============================================
 
   async function loadSplits() {
     try {
@@ -445,17 +399,12 @@ export default function TravelFund() {
     }
   }
 
-  // ============================================
-  // CALCULATIONS
-  // ============================================
-
   function calculateSplit() {
     const totalExpenses = splitExpenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
     const memberCount = splitMembers.length;
     if (memberCount === 0) return { totalExpenses, perPerson: 0, balances: [] };
 
     const perPerson = totalExpenses / memberCount;
-    
     const memberPayments = {};
     splitMembers.forEach(m => { memberPayments[m.name] = 0; });
     splitExpenses.forEach(e => {
@@ -484,10 +433,10 @@ export default function TravelFund() {
   }
 
   // ============================================
-  // INPUT STYLES (با error)
+  // INPUT STYLES
   // ============================================
 
-  const inputClass = (hasError) => `w-full px-5 py-3 rounded-2xl border focus:outline-none transition-colors ${
+  const inputClass = (hasError) => `w-full px-3 sm:px-5 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl border focus:outline-none text-sm sm:text-base transition-colors ${
     hasError
       ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
       : isDark
@@ -495,7 +444,7 @@ export default function TravelFund() {
         : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
   }`;
 
-  const inputClassSmall = (hasError) => `flex-1 px-4 py-2 rounded-xl border focus:outline-none text-sm transition-colors ${
+  const inputClassSmall = (hasError) => `flex-1 min-w-0 px-3 py-2 rounded-xl border focus:outline-none text-xs sm:text-sm transition-colors ${
     hasError
       ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
       : isDark
@@ -522,23 +471,23 @@ export default function TravelFund() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-6 md:p-8">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-10">
-          <h1 className={`text-4xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+        <div className="mb-6 sm:mb-10">
+          <h1 className={`text-2xl sm:text-4xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             ✈️ TravelFund
           </h1>
-          <p className={`text-lg ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+          <p className={`text-sm sm:text-lg ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             Fund your trips and split expenses with friends
           </p>
         </div>
 
         {/* Tabs */}
-        <div className={`rounded-3xl p-2 border mb-8 inline-flex ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+        <div className={`rounded-2xl sm:rounded-3xl p-2 border mb-6 sm:mb-8 inline-flex ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
           <button
             onClick={() => setActiveTab('fund')}
-            className={`px-6 py-3 rounded-2xl font-semibold transition-all ${
+            className={`px-4 sm:px-6 py-2 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition-all ${
               activeTab === 'fund'
                 ? 'bg-blue-600 text-white'
                 : isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
@@ -548,7 +497,7 @@ export default function TravelFund() {
           </button>
           <button
             onClick={() => setActiveTab('split')}
-            className={`px-6 py-3 rounded-2xl font-semibold transition-all ${
+            className={`px-4 sm:px-6 py-2 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition-all ${
               activeTab === 'split'
                 ? 'bg-blue-600 text-white'
                 : isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
@@ -563,8 +512,8 @@ export default function TravelFund() {
         {/* ============================================ */}
         {activeTab === 'fund' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-6">
+              <h2 className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Your Travel Funds
               </h2>
               <button
@@ -572,7 +521,7 @@ export default function TravelFund() {
                   setShowCreateFund(true);
                   setFundErrors({});
                 }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-semibold transition"
+                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition"
               >
                 + New Fund
               </button>
@@ -580,12 +529,11 @@ export default function TravelFund() {
 
             {/* Create Fund Modal */}
             {showCreateFund && (
-              <div className={`rounded-3xl p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                <h3 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                <h3 className={`text-lg sm:text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   Create New Travel Fund
                 </h3>
-                <div className="space-y-4">
-                  {/* Title */}
+                <div className="space-y-3 sm:space-y-4">
                   <div>
                     <input
                       type="text"
@@ -597,7 +545,6 @@ export default function TravelFund() {
                     {errorText(fundErrors.title)}
                   </div>
 
-                  {/* Target Amount */}
                   <div>
                     <input
                       type="number"
@@ -610,22 +557,20 @@ export default function TravelFund() {
                     {errorText(fundErrors.target_amount)}
                   </div>
 
-                  {/* Wallet Address */}
                   <div>
                     <input
                       type="text"
                       placeholder="Wallet Address (0x...)"
                       value={newFund.wallet_address}
                       onChange={(e) => setNewFund({ ...newFund, wallet_address: e.target.value })}
-                      className={`${inputClass(!!fundErrors.wallet_address)} font-mono`}
+                      className={`${inputClass(!!fundErrors.wallet_address)} font-mono text-xs sm:text-base`}
                     />
                     {errorText(fundErrors.wallet_address)}
-                    <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    <p className={`text-[10px] sm:text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                       Must be a valid Ethereum address on Base Network
                     </p>
                   </div>
 
-                  {/* Description */}
                   <div>
                     <textarea
                       placeholder="Description (optional, max 500 characters)"
@@ -635,15 +580,15 @@ export default function TravelFund() {
                       className={`${inputClass(!!fundErrors.description)} resize-none`}
                     />
                     {errorText(fundErrors.description)}
-                    <p className={`text-xs mt-1 text-right ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    <p className={`text-[10px] sm:text-xs mt-1 text-right ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                       {newFund.description?.length || 0}/500
                     </p>
                   </div>
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                     <button
                       onClick={createFund}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-2xl font-semibold transition"
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition"
                     >
                       Create Fund
                     </button>
@@ -653,7 +598,7 @@ export default function TravelFund() {
                         setNewFund({ title: '', target_amount: '', wallet_address: '', description: '' });
                         setFundErrors({});
                       }}
-                      className={`px-6 py-3 rounded-2xl font-medium transition ${
+                      className={`px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-sm sm:text-base transition ${
                         isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'
                       }`}
                     >
@@ -666,17 +611,17 @@ export default function TravelFund() {
 
             {/* Funds List */}
             {funds.length === 0 ? (
-              <div className={`rounded-3xl p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                <div className="text-6xl mb-4">🌍</div>
-                <h3 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <div className={`rounded-2xl sm:rounded-3xl p-8 sm:p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                <div className="text-5xl sm:text-6xl mb-3 sm:mb-4">🌍</div>
+                <h3 className={`text-lg sm:text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   No Travel Funds Yet
                 </h3>
-                <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                <p className={`text-xs sm:text-base ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   Create your first travel fund and start collecting contributions!
                 </p>
               </div>
             ) : (
-              <div className="space-y-6">
+              <div className="space-y-4 sm:space-y-6">
                 {funds.map((fund) => {
                   const contributions = fundContributions[fund.id] || [];
                   const totalCollected = contributions.reduce((sum, c) => sum + parseFloat(c.amount), 0);
@@ -685,21 +630,21 @@ export default function TravelFund() {
                   const donateError = donateErrors[fund.id]?.amount;
 
                   return (
-                    <div key={fund.id} className={`rounded-3xl p-6 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                      <div className="flex justify-between items-start mb-4">
-                        <div>
-                          <h3 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <div key={fund.id} className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                      <div className="flex justify-between items-start gap-2 sm:gap-4 mb-3 sm:mb-4">
+                        <div className="flex-1 min-w-0">
+                          <h3 className={`text-lg sm:text-2xl font-bold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                             {fund.title}
                           </h3>
                           {fund.description && (
-                            <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                            <p className={`text-xs sm:text-sm mt-1 line-clamp-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                               {fund.description}
                             </p>
                           )}
                         </div>
                         <button
                           onClick={() => deleteFund(fund.id)}
-                          className={`px-3 py-2 rounded-xl text-sm font-medium transition ${
+                          className={`flex-shrink-0 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium transition ${
                             isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'
                           }`}
                         >
@@ -708,14 +653,14 @@ export default function TravelFund() {
                       </div>
 
                       {/* Progress Bar */}
-                      <div className="mb-4">
-                        <div className="flex justify-between mb-2">
-                          <span className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Progress</span>
-                          <span className={`text-sm font-bold ${isComplete ? 'text-green-500' : isDark ? 'text-blue-400' : 'text-blue-600'}`}>
+                      <div className="mb-3 sm:mb-4">
+                        <div className="flex justify-between mb-1.5 sm:mb-2">
+                          <span className={`text-xs sm:text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Progress</span>
+                          <span className={`text-xs sm:text-sm font-bold ${isComplete ? 'text-green-500' : isDark ? 'text-blue-400' : 'text-blue-600'}`}>
                             {percentage.toFixed(1)}%
                           </span>
                         </div>
-                        <div className={`w-full h-4 rounded-full overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}>
+                        <div className={`w-full h-3 sm:h-4 rounded-full overflow-hidden ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}>
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${isComplete ? 'bg-green-500' : 'bg-gradient-to-r from-blue-500 to-blue-600'}`}
                             style={{ width: `${percentage}%` }}
@@ -724,16 +669,16 @@ export default function TravelFund() {
                       </div>
 
                       {/* Stats */}
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div className={`p-4 rounded-2xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                          <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Collected</p>
-                          <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      <div className="grid grid-cols-2 gap-2 sm:gap-4 mb-3 sm:mb-4">
+                        <div className={`p-2.5 sm:p-4 rounded-xl sm:rounded-2xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                          <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Collected</p>
+                          <p className={`text-base sm:text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                             ${totalCollected.toFixed(2)}
                           </p>
                         </div>
-                        <div className={`p-4 rounded-2xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                          <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Target</p>
-                          <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        <div className={`p-2.5 sm:p-4 rounded-xl sm:rounded-2xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                          <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Target</p>
+                          <p className={`text-base sm:text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                             ${fund.target_amount.toFixed(2)}
                           </p>
                         </div>
@@ -741,8 +686,8 @@ export default function TravelFund() {
 
                       {/* Complete Message */}
                       {isComplete && (
-                        <div className={`p-4 rounded-2xl mb-4 ${isDark ? 'bg-green-900/30 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
-                          <p className={`text-center font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                        <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl mb-3 sm:mb-4 ${isDark ? 'bg-green-900/30 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
+                          <p className={`text-center text-xs sm:text-sm font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                             🎉 Fund Complete! You're ready to travel!
                           </p>
                         </div>
@@ -750,10 +695,10 @@ export default function TravelFund() {
 
                       {/* Public Link */}
                       {fund.slug && (
-                        <div className={`p-4 rounded-2xl mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                          <p className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>🔗 Public Fund Link</p>
+                        <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl mb-3 sm:mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                          <p className={`text-[10px] sm:text-xs mb-1.5 sm:mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>🔗 Public Fund Link</p>
                           <div className="flex gap-2">
-                            <div className={`flex-1 px-4 py-2 rounded-xl font-mono text-sm truncate ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700 border border-gray-200'}`}>
+                            <div className={`flex-1 px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-mono text-[10px] sm:text-sm truncate ${isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700 border border-gray-200'}`}>
                               {window.location.origin}/trip/{fund.slug}
                             </div>
                             <button
@@ -761,7 +706,7 @@ export default function TravelFund() {
                                 navigator.clipboard.writeText(`${window.location.origin}/trip/${fund.slug}`);
                                 alert('Link copied!');
                               }}
-                              className={`px-4 py-2 rounded-xl font-medium ${isDark ? 'bg-blue-500 text-white' : 'bg-blue-600 text-white'}`}
+                              className={`flex-shrink-0 px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-medium text-xs sm:text-base ${isDark ? 'bg-blue-500 text-white' : 'bg-blue-600 text-white'}`}
                             >
                               📋
                             </button>
@@ -770,26 +715,26 @@ export default function TravelFund() {
                       )}
 
                       {/* Wallet Address */}
-                      <div className={`p-3 rounded-2xl mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                        <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Fund Wallet Address</p>
-                        <p className={`font-mono text-sm break-all ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      <div className={`p-2.5 sm:p-3 rounded-xl sm:rounded-2xl mb-3 sm:mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                        <p className={`text-[10px] sm:text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Fund Wallet Address</p>
+                        <p className={`font-mono text-[10px] sm:text-sm break-all ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                           {fund.wallet_address}
                         </p>
                       </div>
 
                       {/* Donate Section */}
                       {!isComplete && (
-                        <div className={`p-4 rounded-2xl ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
-                          <p className={`text-sm font-medium mb-3 ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
+                        <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
+                          <p className={`text-xs sm:text-sm font-medium mb-2 sm:mb-3 ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
                             Contribute to this fund
                           </p>
-                          <div className="flex gap-3">
+                          <div className="flex flex-col sm:flex-row gap-2">
                             <input
                               type="text"
                               placeholder="Your name (optional)"
                               value={donateName[fund.id] || ''}
                               onChange={(e) => setDonateName({ ...donateName, [fund.id]: e.target.value })}
-                              className={`${inputClassSmall(false)} max-w-[200px]`}
+                              className={`${inputClassSmall(false)} max-w-full sm:max-w-[200px]`}
                             />
                             <input
                               type="number"
@@ -797,12 +742,12 @@ export default function TravelFund() {
                               placeholder="Amount"
                               value={donateAmount[fund.id] || ''}
                               onChange={(e) => setDonateAmount({ ...donateAmount, [fund.id]: e.target.value })}
-                              className={`${inputClassSmall(!!donateError)} w-32`}
+                              className={`${inputClassSmall(!!donateError)} w-full sm:w-32`}
                             />
                             {!account ? (
                               <button
                                 onClick={connectWallet}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-900 text-white'}`}
+                                className={`w-full sm:w-auto px-4 py-2 rounded-xl text-xs sm:text-sm font-medium ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-900 text-white'}`}
                               >
                                 Connect
                               </button>
@@ -810,7 +755,7 @@ export default function TravelFund() {
                               <button
                                 onClick={() => donateToFund(fund.id)}
                                 disabled={donating}
-                                className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400"
+                                className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400"
                               >
                                 {donating ? '...' : 'Donate'}
                               </button>
@@ -823,22 +768,22 @@ export default function TravelFund() {
 
                       {/* Recent Contributions */}
                       {contributions.length > 0 && (
-                        <div className="mt-4">
-                          <p className={`text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        <div className="mt-3 sm:mt-4">
+                          <p className={`text-xs sm:text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                             Recent Contributions ({contributions.length})
                           </p>
                           <div className="space-y-2">
                             {contributions.slice(0, 3).map((c) => (
-                              <div key={c.id} className={`flex justify-between items-center p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                                <div>
-                                  <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              <div key={c.id} className={`flex justify-between items-center p-2.5 sm:p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                                <div className="min-w-0 flex-1">
+                                  <p className={`text-xs sm:text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                     {c.contributor_name || 'Anonymous'}
                                   </p>
-                                  <p className={`text-xs font-mono ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                  <p className={`text-[10px] sm:text-xs font-mono truncate ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                                     {c.contributor_address.substring(0, 6)}...{c.contributor_address.substring(38)}
                                   </p>
                                 </div>
-                                <p className={`font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                                <p className={`font-bold text-xs sm:text-base flex-shrink-0 ml-2 ${isDark ? 'text-green-400' : 'text-green-600'}`}>
                                   ${parseFloat(c.amount).toFixed(2)}
                                 </p>
                               </div>
@@ -859,8 +804,8 @@ export default function TravelFund() {
         {/* ============================================ */}
         {activeTab === 'split' && (
           <div>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 mb-6">
+              <h2 className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Expense Splits
               </h2>
               <button
@@ -868,7 +813,7 @@ export default function TravelFund() {
                   setShowCreateSplit(true);
                   setSplitErrors({});
                 }}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-semibold transition"
+                className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition"
               >
                 + New Split
               </button>
@@ -876,11 +821,11 @@ export default function TravelFund() {
 
             {/* Create Split Modal */}
             {showCreateSplit && (
-              <div className={`rounded-3xl p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                <h3 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                <h3 className={`text-lg sm:text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   Create New Split
                 </h3>
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   <div>
                     <input
                       type="text"
@@ -901,10 +846,10 @@ export default function TravelFund() {
                     />
                     {errorText(splitErrors.host_name)}
                   </div>
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                     <button
                       onClick={createSplit}
-                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-2xl font-semibold transition"
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-semibold text-sm sm:text-base transition"
                     >
                       Create Split
                     </button>
@@ -914,7 +859,7 @@ export default function TravelFund() {
                         setNewSplit({ title: '', host_name: '' });
                         setSplitErrors({});
                       }}
-                      className={`px-6 py-3 rounded-2xl font-medium transition ${
+                      className={`px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl sm:rounded-2xl font-medium text-sm sm:text-base transition ${
                         isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'
                       }`}
                     >
@@ -927,7 +872,7 @@ export default function TravelFund() {
 
             {/* Split Selection */}
             {!selectedSplit && splits.length > 0 && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 {splits.map((split) => (
                   <div
                     key={split.id}
@@ -935,17 +880,17 @@ export default function TravelFund() {
                       setSelectedSplit(split);
                       loadSplitDetails(split.id);
                     }}
-                    className={`rounded-3xl p-6 border cursor-pointer transition-all hover:scale-105 ${
+                    className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border cursor-pointer transition-all hover:scale-[1.02] ${
                       isDark ? 'bg-gray-900 border-gray-800 hover:border-blue-500' : 'bg-white border-blue-100 hover:border-blue-300'
                     }`}
                   >
-                    <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <h3 className={`text-base sm:text-xl font-bold mb-1 sm:mb-2 truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                       {split.title}
                     </h3>
-                    <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                       Host: {split.host_name}
                     </p>
-                    <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    <p className={`text-[10px] sm:text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                       {new Date(split.created_at).toLocaleDateString()}
                     </p>
                   </div>
@@ -954,12 +899,12 @@ export default function TravelFund() {
             )}
 
             {!selectedSplit && splits.length === 0 && (
-              <div className={`rounded-3xl p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                <div className="text-6xl mb-4">🧮</div>
-                <h3 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <div className={`rounded-2xl sm:rounded-3xl p-8 sm:p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                <div className="text-5xl sm:text-6xl mb-3 sm:mb-4">🧮</div>
+                <h3 className={`text-lg sm:text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   No Splits Yet
                 </h3>
-                <p className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                <p className={`text-xs sm:text-base ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   Create your first expense split to track shared costs!
                 </p>
               </div>
@@ -974,26 +919,26 @@ export default function TravelFund() {
                     setSplitMembers([]);
                     setSplitExpenses([]);
                   }}
-                  className={`mb-4 px-4 py-2 rounded-xl text-sm font-medium transition ${
+                  className={`mb-4 px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium transition ${
                     isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                   }`}
                 >
                   ← Back to Splits
                 </button>
 
-                <div className={`rounded-3xl p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h3 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                <div className={`rounded-2xl sm:rounded-3xl p-4 sm:p-6 border mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                  <div className="flex justify-between items-start gap-2 sm:gap-4 mb-4">
+                    <div className="flex-1 min-w-0">
+                      <h3 className={`text-lg sm:text-2xl font-bold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         {selectedSplit.title}
                       </h3>
-                      <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                      <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                         Host: {selectedSplit.host_name}
                       </p>
                     </div>
                     <button
                       onClick={() => deleteSplit(selectedSplit.id)}
-                      className={`px-3 py-2 rounded-xl text-sm font-medium transition ${
+                      className={`flex-shrink-0 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg sm:rounded-xl text-xs sm:text-sm font-medium transition ${
                         isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'
                       }`}
                     >
@@ -1002,17 +947,17 @@ export default function TravelFund() {
                   </div>
 
                   {/* Add Member */}
-                  <div className={`p-4 rounded-2xl mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                    <h4 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl mb-4 sm:mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                    <h4 className={`text-xs sm:text-sm font-semibold mb-2 sm:mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                       Add Members
                     </h4>
-                    <div className="flex gap-3 flex-wrap">
+                    <div className="flex flex-col sm:flex-row gap-2">
                       <input
                         type="text"
                         placeholder="Member name"
                         value={newMember.name}
                         onChange={(e) => setNewMember({ ...newMember, name: e.target.value })}
-                        className={`${inputClassSmall(!!memberErrors.name)} min-w-[150px]`}
+                        className={`${inputClassSmall(!!memberErrors.name)} min-w-0`}
                       />
                       <input
                         type="number"
@@ -1020,11 +965,11 @@ export default function TravelFund() {
                         placeholder="Pre-paid"
                         value={newMember.pre_paid}
                         onChange={(e) => setNewMember({ ...newMember, pre_paid: e.target.value })}
-                        className={`${inputClassSmall(!!memberErrors.pre_paid)} w-32`}
+                        className={`${inputClassSmall(!!memberErrors.pre_paid)} w-full sm:w-32`}
                       />
                       <button
                         onClick={addMember}
-                        className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+                        className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
                       >
                         Add
                       </button>
@@ -1035,24 +980,24 @@ export default function TravelFund() {
 
                   {/* Members List */}
                   {splitMembers.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <div className="mb-4 sm:mb-6">
+                      <h4 className={`text-xs sm:text-sm font-semibold mb-2 sm:mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         Members ({splitMembers.length})
                       </h4>
                       <div className="space-y-2">
                         {splitMembers.map((m) => (
-                          <div key={m.id} className={`flex justify-between items-center p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                            <div>
-                              <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          <div key={m.id} className={`flex justify-between items-center p-2.5 sm:p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-xs sm:text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                 {m.name}
                               </p>
-                              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                              <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                                 Pre-paid: ${parseFloat(m.pre_paid).toFixed(2)}
                               </p>
                             </div>
                             <button
                               onClick={() => removeMember(m.id)}
-                              className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                              className={`flex-shrink-0 px-2 sm:px-3 py-1 rounded-lg text-[10px] sm:text-xs font-medium transition ${
                                 isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'
                               }`}
                             >
@@ -1066,11 +1011,11 @@ export default function TravelFund() {
 
                   {/* Add Expense */}
                   {splitMembers.length > 0 && (
-                    <div className={`p-4 rounded-2xl mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                      <h4 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl mb-4 sm:mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                      <h4 className={`text-xs sm:text-sm font-semibold mb-2 sm:mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         Add Expense
                       </h4>
-                      <div className="space-y-3">
+                      <div className="space-y-2 sm:space-y-3">
                         <div>
                           <input
                             type="text"
@@ -1081,19 +1026,19 @@ export default function TravelFund() {
                           />
                           {errorText(expenseErrors.description)}
                         </div>
-                        <div className="flex gap-3 flex-wrap">
+                        <div className="flex flex-col sm:flex-row gap-2">
                           <input
                             type="number"
                             step="0.01"
                             placeholder="Amount"
                             value={newExpense.amount}
                             onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-                            className={`${inputClassSmall(!!expenseErrors.amount)} flex-1 min-w-[120px]`}
+                            className={`${inputClassSmall(!!expenseErrors.amount)} flex-1 min-w-0`}
                           />
                           <select
                             value={newExpense.paid_by}
                             onChange={(e) => setNewExpense({ ...newExpense, paid_by: e.target.value })}
-                            className={`${inputClassSmall(!!expenseErrors.paid_by)} flex-1 min-w-[150px]`}
+                            className={`${inputClassSmall(!!expenseErrors.paid_by)} flex-1 min-w-0`}
                           >
                             <option value="">Paid by...</option>
                             {splitMembers.map((m) => (
@@ -1102,7 +1047,7 @@ export default function TravelFund() {
                           </select>
                           <button
                             onClick={addExpense}
-                            className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
+                            className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-blue-600 text-white hover:bg-blue-700"
                           >
                             Add
                           </button>
@@ -1115,28 +1060,28 @@ export default function TravelFund() {
 
                   {/* Expenses List */}
                   {splitExpenses.length > 0 && (
-                    <div className="mb-6">
-                      <h4 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <div className="mb-4 sm:mb-6">
+                      <h4 className={`text-xs sm:text-sm font-semibold mb-2 sm:mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         Expenses ({splitExpenses.length})
                       </h4>
                       <div className="space-y-2">
                         {splitExpenses.map((e) => (
-                          <div key={e.id} className={`flex justify-between items-center p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                            <div>
-                              <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          <div key={e.id} className={`flex justify-between items-center p-2.5 sm:p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                            <div className="min-w-0 flex-1">
+                              <p className={`text-xs sm:text-sm font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                 {e.description}
                               </p>
-                              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                              <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                                 Paid by: {e.paid_by}
                               </p>
                             </div>
-                            <div className="flex items-center gap-3">
-                              <p className={`font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                            <div className="flex items-center gap-1.5 sm:gap-3 flex-shrink-0 ml-2">
+                              <p className={`font-bold text-xs sm:text-base ${isDark ? 'text-green-400' : 'text-green-600'}`}>
                                 ${parseFloat(e.amount).toFixed(2)}
                               </p>
                               <button
                                 onClick={() => removeExpense(e.id)}
-                                className={`px-3 py-1 rounded-lg text-xs font-medium transition ${
+                                className={`px-2 sm:px-3 py-1 rounded-lg text-[10px] sm:text-xs font-medium transition ${
                                   isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'
                                 }`}
                               >
@@ -1151,46 +1096,50 @@ export default function TravelFund() {
 
                   {/* Calculation Results */}
                   {splitMembers.length > 0 && splitExpenses.length > 0 && (
-                    <div className={`p-6 rounded-2xl ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
-                      <h4 className={`text-lg font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    <div className={`p-4 sm:p-6 rounded-xl sm:rounded-2xl ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
+                      <h4 className={`text-base sm:text-lg font-bold mb-3 sm:mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                         📊 Split Calculation
                       </h4>
                       {(() => {
                         const { totalExpenses, perPerson, balances } = calculateSplit();
                         return (
                           <>
-                            <div className="grid grid-cols-2 gap-4 mb-4">
-                              <div className={`p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-                                <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Total Expenses</p>
-                                <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                            <div className="grid grid-cols-2 gap-2 sm:gap-4 mb-3 sm:mb-4">
+                              <div className={`p-3 sm:p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+                                <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Total Expenses</p>
+                                <p className={`text-lg sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                   ${totalExpenses.toFixed(2)}
                                 </p>
                               </div>
-                              <div className={`p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-                                <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Per Person</p>
-                                <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              <div className={`p-3 sm:p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+                                <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Per Person</p>
+                                <p className={`text-lg sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                   ${perPerson.toFixed(2)}
                                 </p>
                               </div>
                             </div>
-                            <div className="space-y-3">
+                            <div className="space-y-2 sm:space-y-3">
                               {balances.map((b) => (
-                                <div key={b.name} className={`p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
-                                  <div className="flex justify-between items-center mb-2">
-                                    <p className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                                <div key={b.name} className={`p-3 sm:p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+                                  <div className="flex justify-between items-center mb-1.5 sm:mb-2">
+                                    <p className={`text-xs sm:text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                                       {b.name}
                                     </p>
                                     {b.balance > 0 ? (
-                                      <span className="text-green-500 font-bold">+${b.receives.toFixed(2)}</span>
+                                      <span className="text-green-500 font-bold text-xs sm:text-base flex-shrink-0 ml-2">
+                                        +${b.receives.toFixed(2)}
+                                      </span>
                                     ) : b.balance < 0 ? (
-                                      <span className="text-red-500 font-bold">-${b.owes.toFixed(2)}</span>
+                                      <span className="text-red-500 font-bold text-xs sm:text-base flex-shrink-0 ml-2">
+                                        -${b.owes.toFixed(2)}
+                                      </span>
                                     ) : (
-                                      <span className={`font-bold ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                                      <span className={`font-bold text-xs sm:text-base flex-shrink-0 ml-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
                                         Settled
                                       </span>
                                     )}
                                   </div>
-                                  <div className="flex gap-4 text-xs flex-wrap">
+                                  <div className="flex flex-wrap gap-2 sm:gap-4 text-[10px] sm:text-xs">
                                     <span className={isDark ? 'text-gray-400' : 'text-gray-500'}>
                                       Paid: ${b.paid.toFixed(2)}
                                     </span>

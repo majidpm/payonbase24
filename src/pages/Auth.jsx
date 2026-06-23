@@ -37,7 +37,7 @@ async function signInWithGoogle() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://payonbase24.vercel.app'  // ← آدرس Vercel
+        redirectTo: window.location.origin  // ← این کار رو انجام بده
       }
     });
     if (error) throw error;
