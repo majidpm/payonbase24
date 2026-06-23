@@ -1,49 +1,48 @@
-import { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ethers } from 'ethers';
-import { supabase } from '../lib/supabase';
-import QRCode from 'react-qr-code';
-import Navbar from '../components/Navbar';
-import { useTheme } from '../contexts/ThemeContext';
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { ethers } from 'ethers'
+import { supabase } from '../lib/supabase'
+import QRCode from 'react-qr-code'
+import { useTheme } from '../contexts/ThemeContext'
+import { handleAppError, showSuccess } from '../lib/errorHandler'
+import Navbar from '../components/Navbar'
 
 export default function Pay() {
-  const { isDark } = useTheme();
-  const { slug } = useParams();
-  const navigate = useNavigate();
-  const [account, setAccount] = useState('');
-  const [status, setStatus] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [payment, setPayment] = useState(null);
-  const [copiedTx, setCopiedTx] = useState(false);
-  const [user, setUser] = useState(null);
-  const [signatureValid, setSignatureValid] = useState(false);
-  const [signatureLoading, setSignatureLoading] = useState(false);
-  const [walletConnecting, setWalletConnecting] = useState(false);
-  const [needsSign, setNeedsSign] = useState(false);
-  const [payerAddress, setPayerAddress] = useState(null);
+  const { isDark } = useTheme()
+  const { slug } = useParams()
+  const navigate = useNavigate()
+  const [account, setAccount] = useState('')
+  const [status, setStatus] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [payment, setPayment] = useState(null)
+  const [copiedTx, setCopiedTx] = useState(false)
+  const [user, setUser] = useState(null)
+  const [signatureValid, setSignatureValid] = useState(false)
+  const [signatureLoading, setSignatureLoading] = useState(false)
+  const [walletConnecting, setWalletConnecting] = useState(false)
+  const [needsSign, setNeedsSign] = useState(false)
+  const [payerAddress, setPayerAddress] = useState(null)
 
-  const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
 
   const isWalletInstalled = () => {
-    return typeof window.ethereum !== 'undefined';
-  };
+    return typeof window.ethereum !== 'undefined'
+  }
 
   useEffect(() => {
-    loadPayment();
-    loadUser();
-    const interval = setInterval(checkPaymentStatus, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    if (account && payerAddress) {
-      // آپدیت وضعیت payer هر بار که account یا payerAddress تغییر میکنه
-    }
-  }, [account, payerAddress]);
+    loadPayment()
+    loadUser()
+    const interval = setInterval(checkPaymentStatus, 3000)
+    return () => clearInterval(interval)
+  }, [])
 
   async function loadUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    setUser(user);
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+    } catch (err) {
+      console.error('Load user error:', err)
+    }
   }
 
   async function loadPayment() {
@@ -52,71 +51,44 @@ export default function Pay() {
         .from('payment')
         .select('*')
         .eq('slug', slug)
-        .single();
-      if (error) throw error;
-      setPayment(data);
+        .single()
+      
+      if (error) throw error
+      setPayment(data)
       if (data.paid && data.payer_address) {
-        setPayerAddress(data.payer_address);
+        setPayerAddress(data.payer_address)
       }
     } catch (err) {
-      console.error(err);
+      handleAppError(err, 'loadPayment')
     } finally {
-      setLoading(false);
-    }
-  }
-
-  async function checkSignatureValidity(address) {
-    try {
-      const { data, error } = await supabase
-        .from('wallet_signatures')
-        .select('*')
-        .eq('wallet_address', address)
-        .gt('expires_at', new Date().toISOString())
-        .order('created_at', { ascending: false })
-        .limit(1);
-      if (error) {
-        console.error('Check signature error:', error);
-        return false;
-      }
-      if (data && data.length > 0) {
-        setSignatureValid(true);
-        setNeedsSign(false);
-        setStatus('✅ Wallet verified');
-        return true;
-      } else {
-        setSignatureValid(false);
-        setNeedsSign(true);
-        setStatus('⚠️ Please sign to verify your wallet');
-        return false;
-      }
-    } catch (err) {
-      console.error('Signature check error:', err);
-      setSignatureValid(false);
-      setNeedsSign(true);
-      return false;
+      setLoading(false)
     }
   }
 
   async function signMessage() {
     if (!account) {
-      setStatus(' Please connect wallet first');
-      return;
+      handleAppError({ message: 'Please connect wallet first' }, 'signMessage')
+      return
     }
     if (!isWalletInstalled()) {
-      setStatus('❌ Please install MetaMask!');
-      return;
+      handleAppError({ message: 'Please install MetaMask!' }, 'signMessage')
+      return
     }
-    setSignatureLoading(true);
-    setStatus('⏳ Please sign the message in your wallet...');
+    
+    setSignatureLoading(true)
+    setStatus('⏳ Please sign the message in your wallet...')
+    
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      const signer = await provider.getSigner()
       const message = `PayonBase24 - Wallet Verification
 Domain: ${window.location.origin}
 Address: ${account}
 Timestamp: ${Date.now()}
-Expires: 1 hour`;
-      const signature = await signer.signMessage(message);
+Expires: 1 hour`
+      
+      const signature = await signer.signMessage(message)
+      
       const { error } = await supabase
         .from('wallet_signatures')
         .insert({
@@ -125,42 +97,33 @@ Expires: 1 hour`;
           message: message,
           user_id: user?.id || null,
           expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-        });
-      if (error) {
-        console.error('Save signature error:', error);
-        throw error;
-      }
-      setSignatureValid(true);
-      setNeedsSign(false);
-      setStatus('✅ Wallet verified successfully!');
-      setTimeout(() => {
-        setSignatureValid(false);
-        setNeedsSign(true);
-        setStatus('⏳ Signature expired. Please sign again.');
-      }, 60 * 60 * 1000);
+        })
+      
+      if (error) throw error
+      
+      setSignatureValid(true)
+      setNeedsSign(false)
+      showSuccess('Wallet verified successfully!')
     } catch (err) {
-      console.error('Sign error:', err);
-      if (err.code === 'ACTION_REJECTED') {
-        setStatus('❌ Signing rejected by user');
-      } else {
-        setStatus(' Failed to sign message: ' + err.message);
-      }
-      setSignatureValid(false);
-      setNeedsSign(true);
+      handleAppError(err, 'signMessage')
+      setSignatureValid(false)
+      setNeedsSign(true)
     } finally {
-      setSignatureLoading(false);
+      setSignatureLoading(false)
     }
   }
 
   async function checkPaymentStatus() {
-    if (!payment || payment.paid) return;
+    if (!payment || payment.paid) return
     try {
       const { data, error } = await supabase
         .from('payment')
         .select('paid, tx_hash, payer_address, is_active')
         .eq('slug', slug)
-        .single();
-      if (error) throw error;
+        .single()
+      
+      if (error) throw error
+      
       if (data.paid && !payment.paid) {
         setPayment(prev => ({
           ...prev,
@@ -168,93 +131,96 @@ Expires: 1 hour`;
           tx_hash: data.tx_hash,
           payer_address: data.payer_address,
           is_active: false
-        }));
-        setPayerAddress(data.payer_address);
-        setStatus('✅ Payment Successful!');
+        }))
+        setPayerAddress(data.payer_address)
+        showSuccess('Payment Successful!')
       }
     } catch (err) {
-      console.error('Status check error:', err);
+      console.error('Status check error:', err)
     }
   }
 
   async function connectWallet() {
     try {
       if (!isWalletInstalled()) {
-        setStatus('❌ Please install a Web3 wallet');
-        return;
+        handleAppError({ message: 'Please install a Web3 wallet' }, 'connectWallet')
+        return
       }
-      setWalletConnecting(true);
-      setStatus('⏳ Connecting wallet...');
+      
+      setWalletConnecting(true)
+      setStatus('⏳ Connecting wallet...')
+      
       const accounts = await window.ethereum.request({
         method: 'eth_requestAccounts'
-      });
+      })
+      
       if (accounts && accounts.length > 0) {
-        const address = accounts[0];
-        setAccount(address);
-        setStatus('⏳ Checking wallet verification...');
-        const isValid = await checkSignatureValidity(address);
-        if (isValid) {
-          setStatus('✅ Wallet verified! Ready to pay.');
-        } else {
-          setStatus('⚠️ Please sign to verify your wallet');
-        }
+        const address = accounts[0]
+        setAccount(address)
+        setStatus('✅ Wallet connected!')
+        showSuccess('Wallet connected successfully!')
       } else {
-        setStatus('❌ No accounts found');
+        handleAppError({ message: 'No accounts found' }, 'connectWallet')
       }
     } catch (err) {
-      console.error('Connect error:', err);
-      setStatus('❌ Failed to connect wallet');
+      handleAppError(err, 'connectWallet')
     } finally {
-      setWalletConnecting(false);
+      setWalletConnecting(false)
     }
   }
 
   async function pay() {
     if (payment.is_active === false) {
-      setStatus('❌ This payment link is no longer active');
-      return;
+      handleAppError({ message: 'This payment link is no longer active' }, 'pay')
+      return
     }
     if (payment.paid) {
-      setStatus('❌ This payment has already been completed');
-      return;
+      handleAppError({ message: 'This payment has already been completed' }, 'pay')
+      return
     }
     if (payment.expires_at && new Date() > new Date(payment.expires_at)) {
-      setStatus('❌ This payment link has expired');
-      return;
+      handleAppError({ message: 'This payment link has expired' }, 'pay')
+      return
     }
     if (!account) {
-      setStatus('❌ Please connect your wallet first');
-      return;
+      handleAppError({ message: 'Please connect your wallet first' }, 'pay')
+      return
     }
     if (!signatureValid) {
-      setStatus('️ Please sign to verify your wallet first');
-      return;
+      handleAppError({ message: 'Please sign to verify your wallet first' }, 'pay')
+      return
     }
     if (!isWalletInstalled()) {
-      setStatus('❌ Please install MetaMask!');
-      return;
+      handleAppError({ message: 'Please install MetaMask!' }, 'pay')
+      return
     }
+    
     try {
-      const BASE_CHAIN_ID = '0x2105';
-      const currentChain = await window.ethereum.request({ method: 'eth_chainId' });
+      const BASE_CHAIN_ID = '0x2105'
+      const currentChain = await window.ethereum.request({ method: 'eth_chainId' })
+      
       if (currentChain !== BASE_CHAIN_ID) {
         await window.ethereum.request({
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: BASE_CHAIN_ID }]
-        });
+        })
       }
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      
+      const provider = new ethers.BrowserProvider(window.ethereum)
+      const signer = await provider.getSigner()
       const contract = new ethers.Contract(USDC_ADDRESS, [
         'function transfer(address to, uint amount) returns (bool)'
-      ], signer);
-      setStatus('⏳ Opening MetaMask...');
+      ], signer)
+      
+      setStatus('⏳ Opening MetaMask...')
       const tx = await contract.transfer(
         payment.recipient,
         ethers.parseUnits(payment.amount.toString(), 6)
-      );
-      setStatus('⏳ Waiting for confirmation...');
-      const receipt = await tx.wait();
+      )
+      
+      setStatus('⏳ Waiting for confirmation...')
+      const receipt = await tx.wait()
+      
       await supabase
         .from('payment')
         .update({
@@ -263,45 +229,46 @@ Expires: 1 hour`;
           payer_address: account,
           is_active: false
         })
-        .eq('slug', slug);
-      setStatus('✅ Payment Successful!');
+        .eq('slug', slug)
+      
+      showSuccess('Payment Successful!')
       setPayment(prev => ({
         ...prev,
         paid: true,
         tx_hash: receipt.hash,
         payer_address: account,
         is_active: false
-      }));
-      setPayerAddress(account);
+      }))
+      setPayerAddress(account)
     } catch (err) {
-      console.error('Pay error:', err);
-      if (err.code === 'ACTION_REJECTED') {
-        setStatus('❌ Transaction rejected by user');
-      } else if (err.code === 'INSUFFICIENT_FUNDS') {
-        setStatus('❌ Insufficient USDC balance');
-      } else {
-        setStatus('❌ Payment Failed');
-      }
+      handleAppError(err, 'pay')
     }
   }
 
   function copyTxHash() {
-    if (payment?.tx_hash) {
-      navigator.clipboard.writeText(payment.tx_hash);
-      setCopiedTx(true);
-      setTimeout(() => setCopiedTx(false), 2000);
+    try {
+      if (payment?.tx_hash) {
+        navigator.clipboard.writeText(payment.tx_hash)
+        setCopiedTx(true)
+        showSuccess('Transaction hash copied!')
+        setTimeout(() => setCopiedTx(false), 2000)
+      }
+    } catch (err) {
+      handleAppError(err, 'copyTxHash')
     }
   }
 
   function viewOnBasescan() {
     if (payment?.tx_hash) {
-      window.open(`https://basescan.org/tx/${payment.tx_hash}`, '_blank');
+      window.open(`https://basescan.org/tx/${payment.tx_hash}`, '_blank')
     }
   }
 
   function goToCreate() {
-    navigate('/');
+    navigate('/create')
   }
+
+
 
   if (loading) return (
     <div className={`min-h-screen flex items-center justify-center text-xl sm:text-2xl transition-colors duration-300 ${

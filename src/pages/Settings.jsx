@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../contexts/ThemeContext';
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { useTheme } from '../contexts/ThemeContext'
+import { handleAppError, showSuccess } from '../lib/errorHandler'
+import { FormSkeleton } from '../components/Skeleton'
 
 export default function Settings() {
-  const { isDark } = useTheme();
-  const navigate = useNavigate();
+  const { isDark } = useTheme()
+  const navigate = useNavigate()
+  
   
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -111,16 +114,16 @@ export default function Settings() {
   }
 
   async function updateProfile(e) {
-    e.preventDefault();
-    setMessage('');
+    e.preventDefault()
+    setMessage('')
     
     if (username && !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-      setUsernameError('Username must be 3-20 characters (letters, numbers, underscores only)');
-      return;
+      setUsernameError('Username must be 3-20 characters (letters, numbers, underscores only)')
+      return
     }
-    if (walletAddress && !validateWallet(walletAddress)) return;
+    if (walletAddress && !validateWallet(walletAddress)) return
 
-    setSaving(true);
+    setSaving(true)
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -140,50 +143,53 @@ export default function Settings() {
           updated_at: new Date().toISOString()
         }, { onConflict: 'user_id' })
         .select()
-        .single();
+        .single()
 
       if (error) {
         if (error.code === '23505') {
-          setUsernameError('This username is already taken');
+          setUsernameError('This username is already taken')
         } else {
-          throw error;
+          throw error
         }
-        return;
+        return
       }
 
-      setProfile(data);
-      setMessage('✅ Profile updated successfully!');
-      setMessageType('success');
-      setTimeout(() => setMessage(''), 3000);
+      setProfile(data)
+      showSuccess('Profile updated successfully!')
+      setTimeout(() => setMessage(''), 3000)
     } catch (err) {
-      console.error('Update error:', err);
-      setMessage('❌ Failed to update profile: ' + err.message);
-      setMessageType('error');
+      handleAppError(err, 'updateProfile')
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
   async function handleLogout() {
     if (window.confirm('Are you sure you want to sign out?')) {
-      await supabase.auth.signOut();
-      navigate('/');
+      try {
+        await supabase.auth.signOut()
+        showSuccess('Signed out successfully')
+        navigate('/')
+      } catch (err) {
+        handleAppError(err, 'handleLogout')
+      }
     }
   }
 
   async function handleResetPassword() {
-    if (!user?.email) return;
-    const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-      redirectTo: `${window.location.origin}/auth`
-    });
-    if (error) {
-      setMessage('❌ Failed to send reset email: ' + error.message);
-      setMessageType('error');
-    } else {
-      setMessage('✅ Password reset email sent! Check your inbox.');
-      setMessageType('success');
+    if (!user?.email) return
+    
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
+        redirectTo: `${window.location.origin}/auth`
+      })
+
+      if (error) throw error
+      
+      showSuccess('Password reset email sent! Check your inbox.')
+    } catch (err) {
+      handleAppError(err, 'handleResetPassword')
     }
-    setTimeout(() => setMessage(''), 5000);
   }
 
   function getPublicProfileUrl() {
@@ -191,16 +197,18 @@ export default function Settings() {
     return `${window.location.origin}/u/${username}`;
   }
 
-  if (loading) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950 text-white' : 'bg-blue-50 text-gray-900'}`}>
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-xl">Loading settings...</p>
+if (loading) {
+  return (
+    <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+      <div className="p-4 sm:p-6 md:p-8">
+        <div className="max-w-2xl mx-auto">
+          <div className={`h-8 rounded w-48 mb-6 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+          <FormSkeleton />
         </div>
       </div>
-    );
-  }
+    </div>
+  )
+}
 
   const socialFields = [
     { key: 'twitter', icon: '🐦', label: 'Twitter / X', placeholder: 'username' },

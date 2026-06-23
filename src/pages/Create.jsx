@@ -1,54 +1,85 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { v4 as uuidv4 } from 'uuid';
-import { useTheme } from '../contexts/ThemeContext';
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { v4 as uuidv4 } from 'uuid'
+import { useTheme } from '../contexts/ThemeContext'
+import { handleAppError, showSuccess } from '../lib/errorHandler'
+import { checkRateLimit } from '../lib/rateLimiter'
+import { FormSkeleton } from '../components/Skeleton'
 
 export default function Create() {
-  const { isDark } = useTheme();
-  const [to, setTo] = useState('');
-  const [amount, setAmount] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [addressError, setAddressError] = useState('');
-  const [showTooltip, setShowTooltip] = useState(false);
-  const navigate = useNavigate();
+  const { isDark } = useTheme()
+  const navigate = useNavigate()
+  const [to, setTo] = useState('')
+  const [amount, setAmount] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+  const [addressError, setAddressError] = useState('')
+  const [showTooltip, setShowTooltip] = useState(false)
+
+  useEffect(() => {
+    checkUser()
+  }, [])
+
+  async function checkUser() {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        navigate('/auth')
+        return
+      }
+    } catch (err) {
+      console.error('Auth check error:', err)
+      handleAppError(err, 'checkUser')
+    } finally {
+      setCheckingAuth(false)
+    }
+  }
 
   const validateAddress = (address) => {
     if (!address) {
-      setAddressError('');
-      return true;
+      setAddressError('')
+      return true
     }
-    const baseAddressRegex = /^0x[a-fA-F0-9]{40}$/;
+    const baseAddressRegex = /^0x[a-fA-F0-9]{40}$/
     if (!baseAddressRegex.test(address)) {
-      setAddressError('Invalid address');
-      return false;
+      setAddressError('Invalid address')
+      return false
     }
-    setAddressError('');
-    return true;
-  };
+    setAddressError('')
+    return true
+  }
 
   const handleAddressChange = (e) => {
-    const value = e.target.value;
-    setTo(value);
-    validateAddress(value);
-  };
+    const value = e.target.value
+    setTo(value)
+    validateAddress(value)
+  }
 
   async function createLink() {
     if (!to || !amount) {
-      alert('Please enter wallet address and amount');
-      return;
+      handleAppError({ message: 'Please enter wallet address and amount' }, 'createLink')
+      return
     }
-    if (!validateAddress(to)) {
-      return;
+    
+    if (!validateAddress(to)) return
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit('create-payment')
+    if (!rateLimit.allowed) {
+      handleAppError({ message: rateLimit.error }, 'createLink')
+      return
     }
+
     try {
-      setLoading(true);
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      setLoading(true)
+      const { data: { user: currentUser } } = await supabase.auth.getUser()
       if (!currentUser) {
-        alert('Please login');
-        return;
+        handleAppError({ message: 'Please login' }, 'createLink')
+        return
       }
-      const slug = uuidv4().slice(0, 8);
+
+      const slug = uuidv4().slice(0, 8)
       const { error } = await supabase
         .from('payment')
         .insert({
@@ -56,16 +87,36 @@ export default function Create() {
           recipient: to,
           amount,
           user_id: currentUser.id
-        });
-      if (error) throw error;
-      const link = `${window.location.origin}/pay/${slug}`;
-      await navigator.clipboard.writeText(link);
-      navigate(`/pay/${slug}`);
+        })
+
+      if (error) throw error
+
+      const link = `${window.location.origin}/pay/${slug}`
+      await navigator.clipboard.writeText(link)
+      
+      showSuccess(`Payment link created! ${rateLimit.remaining} remaining this hour`)
+      navigate(`/pay/${slug}`)
     } catch (err) {
-      alert('Failed to create link');
+      handleAppError(err, 'createLink')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
+  }
+
+  if (checkingAuth) {
+    return (
+      <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+        <div className="p-4 sm:p-6 md:p-8">
+          <div className="max-w-md mx-auto">
+            <div className="text-center mb-8">
+              <div className={`h-10 rounded w-64 mx-auto mb-4 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+              <div className={`h-6 rounded w-96 mx-auto animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+            </div>
+            <FormSkeleton />
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -138,6 +189,11 @@ export default function Create() {
                       : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
                 }`}
               />
+              {addressError && (
+                <p className="text-red-500 text-xs mt-2 flex items-center gap-1">
+                  <span>⚠️</span> {addressError}
+                </p>
+              )}
             </div>
 
             <div>
@@ -169,11 +225,28 @@ export default function Create() {
                   : 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white'
               }`}
             >
-              {loading ? 'Creating...' : 'Create Payment Link'}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>
+                  Creating...
+                </span>
+              ) : (
+                'Create Payment Link'
+              )}
             </button>
           </div>
         </div>
+
+        <div className={`mt-6 p-4 rounded-2xl text-sm ${isDark ? 'bg-gray-900/50 text-gray-400' : 'bg-blue-50 text-gray-600'}`}>
+          <h3 className="font-semibold mb-2">💡 Tips:</h3>
+          <ul className="space-y-1 list-disc list-inside">
+            <li>Double-check the wallet address before creating</li>
+            <li>You can create up to 10 payment links per hour</li>
+            <li>The link will be active until someone pays</li>
+            <li>You'll be redirected to the payment page after creation</li>
+          </ul>
+        </div>
       </div>
     </div>
-  );
+  )
 }

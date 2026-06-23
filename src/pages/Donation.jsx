@@ -1,51 +1,55 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
-import { useTheme } from '../contexts/ThemeContext';
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
+import { useTheme } from '../contexts/ThemeContext'
+import { handleAppError, showSuccess } from '../lib/errorHandler'
+import { StatsSkeleton, CardSkeleton, ListSkeleton } from '../components/Skeleton'
 
 export default function Donation() {
-  const { isDark } = useTheme();
-  const navigate = useNavigate();
-  const [donations, setDonations] = useState([]);
-  const [profile, setProfile] = useState(null);
+  const { isDark } = useTheme()
+  const navigate = useNavigate()
+  const [donations, setDonations] = useState([])
+  const [profile, setProfile] = useState(null)
   const [stats, setStats] = useState({
     totalReceived: 0,
     thisMonth: 0,
     totalDonors: 0,
     topDonor: null,
     topDonorAmount: 0
-  });
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('date');
-  const [searchQuery, setSearchQuery] = useState('');
+  })
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('date')
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData()
+  }, [])
 
   async function loadData() {
-    setLoading(true);
+    setLoading(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
       const { data: profileData } = await supabase
         .from('profiles')
         .select('*')
         .eq('user_id', user.id)
-        .single();
+        .single()
 
-      setProfile(profileData);
+      setProfile(profileData)
 
-      const { data: donationsData } = await supabase
+      const { data: donationsData, error } = await supabase
         .from('donations')
         .select('*')
         .eq('profile_id', profileData?.id || '00000000-0000-0000-0000-000000000000')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
 
-      const donationsList = donationsData || [];
-      setDonations(donationsList);
+      if (error) throw error
+
+      const donationsList = donationsData || []
+      setDonations(donationsList)
 
       const now = new Date();
       const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -92,26 +96,35 @@ export default function Donation() {
       });
 
     } catch (err) {
-      console.error('Error loading donations:', err);
+      handleAppError(err, 'loadData')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
-  async function deleteDonation(id) {
-    if (!window.confirm('Are you sure you want to delete this donation record?')) return;
-    try {
-      const { error } = await supabase
-        .from('donations')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
-      setDonations(donations.filter(d => d.id !== id));
-      await loadData();
-    } catch (err) {
-      console.error('Delete error:', err);
-    }
+async function deleteDonation(id) {
+  if (!window.confirm('Are you sure you want to delete this donation record?')) return
+  
+  // Optimistic update
+  const originalDonations = [...donations]
+  setDonations(donations.filter(d => d.id !== id))
+  
+  try {
+    const { error } = await supabase
+      .from('donations')
+      .delete()
+      .eq('id', id)
+    
+    if (error) throw error
+    
+    showSuccess('Donation deleted')
+    await loadData() // Refresh stats
+  } catch (err) {
+    handleAppError(err, 'deleteDonation')
+    // Rollback
+    setDonations(originalDonations)
   }
+}
 
   function formatDate(dateString) {
     const date = new Date(dateString);
@@ -175,16 +188,25 @@ export default function Donation() {
   const isProfileReady = hasUsername && hasWallet;
   const publicProfileUrl = hasUsername ? `${window.location.origin}/u/${profile.username}` : null;
 
-  if (loading) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950 text-white' : 'bg-blue-50 text-gray-900'}`}>
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-xl">Loading donations...</p>
+ if (loading) {
+  return (
+    <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+      <div className="p-4 sm:p-6 md:p-8">
+        <div className="max-w-7xl mx-auto space-y-6">
+          <div className="flex justify-between items-center">
+            <div className={`h-8 rounded w-64 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+          </div>
+          <StatsSkeleton />
+          <div className={`rounded-2xl p-4 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+            <div className={`h-10 rounded-xl mb-4 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+            <div className={`h-10 rounded-xl animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+          </div>
+          <ListSkeleton count={5} />
         </div>
       </div>
-    );
-  }
+    </div>
+  )
+}
 
   return (
     <div className="p-4 sm:p-6 md:p-8">

@@ -47,7 +47,7 @@ export default function SidebarLayout({ children }) {
   }
 
   const isActive = (path) => {
-    if (path === '/') return location.pathname === '/';
+    if (path === '/create') return location.pathname === '/create';
     return location.pathname.startsWith(path);
   };
 
@@ -131,7 +131,7 @@ export default function SidebarLayout({ children }) {
             <button
               onClick={() => setPaylinkExpanded(!paylinkExpanded)}
               className={`w-full text-left px-4 py-3 rounded-2xl transition-all flex items-center justify-between ${
-                isActive('/') || isActive('/dashboard')
+                isActive('/create') || isActive('/dashboard')
                   ? isDark ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-blue-50 text-blue-600 border border-blue-200'
                   : isDark ? 'text-gray-300 hover:bg-gray-800' : 'text-gray-700 hover:bg-blue-50'
               }`}
@@ -153,9 +153,9 @@ export default function SidebarLayout({ children }) {
             {paylinkExpanded && (
               <div className={`ml-6 mt-2 space-y-1 pl-4 border-l-2 ${isDark ? 'border-gray-700' : 'border-blue-200'}`}>
                 <button
-                  onClick={() => { navigate('/'); setMobileMenuOpen(false); }}
+                  onClick={() => { navigate('/create'); setMobileMenuOpen(false); }}
                   className={`w-full text-left px-4 py-2 rounded-xl text-sm transition-all ${
-                    location.pathname === '/'
+                    location.pathname === '/create'
                       ? isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'
                       : isDark ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-blue-50'
                   }`}
@@ -302,7 +302,7 @@ export default function SidebarLayout({ children }) {
             <button
               onClick={() => setPaylinkExpanded(!paylinkExpanded)}
               className={`w-full text-left px-4 py-3 rounded-2xl transition-all flex items-center justify-between ${
-                isActive('/') || isActive('/dashboard')
+                isActive('/create') || isActive('/dashboard')
                   ? isDark ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-blue-50 text-blue-600 border border-blue-200'
                   : isDark ? 'text-gray-300 hover:bg-gray-800' : 'text-gray-700 hover:bg-blue-50'
               }`}
@@ -324,9 +324,9 @@ export default function SidebarLayout({ children }) {
             {paylinkExpanded && (
               <div className={`ml-6 mt-2 space-y-1 pl-4 border-l-2 ${isDark ? 'border-gray-700' : 'border-blue-200'}`}>
                 <button
-                  onClick={() => navigate('/')}
+                  onClick={() => navigate('/create')}
                   className={`w-full text-left px-4 py-2 rounded-xl text-sm transition-all ${
-                    location.pathname === '/'
+                    location.pathname === '/create'
                       ? isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'
                       : isDark ? 'text-gray-400 hover:bg-gray-800' : 'text-gray-600 hover:bg-blue-50'
                   }`}

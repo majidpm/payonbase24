@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
+import { verifyTransaction } from '../lib/verifyTransaction'
 
 export default function PublicProfile() {
   const { isDark } = useTheme();
@@ -102,75 +103,95 @@ export default function PublicProfile() {
     setStatus('Wallet disconnected.');
   }
 
-  async function sendDonation() {
-    if (!profile?.wallet_address) {
-      setStatus('❌ This profile has not set up their wallet yet');
-      return;
-    }
-    if (!amount && !customAmount) {
-      setStatus('❌ Please select or enter an amount');
-      return;
-    }
-    if (!account) {
-      setStatus('❌ Please connect your wallet first');
-      return;
-    }
-
-    const donationAmount = amount || customAmount;
-    setSending(true);
-    setStatus('⏳ Processing...');
-
-    try {
-      const BASE_CHAIN_ID = '0x2105';
-      const currentChain = await window.ethereum.request({ method: 'eth_chainId' });
-      if (currentChain !== BASE_CHAIN_ID) {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_CHAIN_ID }]
-        });
-      }
-
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(USDC_ADDRESS, [
-        'function transfer(address to, uint amount) returns (bool)'
-      ], signer);
-
-      const tx = await contract.transfer(
-        profile.wallet_address,
-        ethers.parseUnits(donationAmount.toString(), 6)
-      );
-
-      const receipt = await tx.wait();
-
-      const { error } = await supabase
-        .from('donations')
-        .insert({
-          profile_id: profile.id,
-          donor_address: account,
-          amount: donationAmount,
-          message: message.trim() || null,
-          tx_hash: receipt.hash
-        });
-
-      if (error) throw error;
-
-      setStatus('✅ Thank you!');
-      setAmount('');
-      setCustomAmount('');
-      setMessage('');
-      await loadDonations(profile.id);
-    } catch (err) {
-      console.error('Donation error:', err);
-      if (err.code === 'ACTION_REJECTED') {
-        setStatus(' Transaction rejected');
-      } else {
-        setStatus('❌ Failed: ' + (err.shortMessage || err.message));
-      }
-    } finally {
-      setSending(false);
-    }
+ async function sendDonation() {
+  if (!profile?.wallet_address) {
+    setStatus('❌ This profile has not set up their wallet yet');
+    return;
   }
+  if (!amount && !customAmount) {
+    setStatus('❌ Please select or enter an amount');
+    return;
+  }
+  if (!account) {
+    setStatus('❌ Please connect your wallet first');
+    return;
+  }
+
+  const donationAmount = amount || customAmount;
+  setSending(true);
+  setStatus('⏳ Processing...');
+
+  try {
+    // 1. چک کردن network
+    const BASE_CHAIN_ID = '0x2105';
+    const currentChain = await window.ethereum.request({ method: 'eth_chainId' });
+    if (currentChain !== BASE_CHAIN_ID) {
+      setStatus('⏳ Switching to Base Network...');
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: BASE_CHAIN_ID }]
+      });
+    }
+
+    // 2. ارسال تراکنش
+    setStatus('⏳ Sending transaction...');
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(USDC_ADDRESS, [
+      'function transfer(address to, uint amount) returns (bool)'
+    ], signer);
+
+    const tx = await contract.transfer(
+      profile.wallet_address,
+      ethers.parseUnits(donationAmount.toString(), 6)
+    );
+
+    setStatus('⏳ Waiting for confirmation...');
+    const receipt = await tx.wait();
+
+    // 3. ✅ VERIFY TRANSACTION از blockchain
+    setStatus('⏳ Verifying transaction...');
+    const verification = await verifyTransaction(
+      receipt.hash,
+      profile.wallet_address,
+      donationAmount
+    );
+
+    if (!verification.valid) {
+      throw new Error(`Verification failed: ${verification.reason}`);
+    }
+
+    // 4. ثبت donation با داده‌های واقعی از blockchain
+    setStatus('⏳ Recording donation...');
+    const { error } = await supabase
+      .from('donations')
+      .insert({
+        profile_id: profile.id,
+        donor_address: verification.from,  // ← از blockchain
+        amount: verification.amount,        // ← از blockchain
+        message: message.trim() || null,
+        tx_hash: receipt.hash,
+        verified: true                      // ← flag جدید
+      });
+
+    if (error) throw error;
+
+    setStatus('✅ Thank you for your donation!');
+    setAmount('');
+    setCustomAmount('');
+    setMessage('');
+    await loadDonations(profile.id);
+  } catch (err) {
+    console.error('Donation error:', err);
+    if (err.code === 'ACTION_REJECTED') {
+      setStatus(' Transaction rejected');
+    } else {
+      setStatus('❌ Failed: ' + (err.shortMessage || err.message));
+    }
+  } finally {
+    setSending(false);
+  }
+}
 
   function formatAddress(address) {
     if (!address) return '';

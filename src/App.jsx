@@ -1,67 +1,88 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-import { supabase } from './lib/supabase';
-import Landing from './pages/Landing';
-import Create from './pages/Create';
-import Pay from './pages/Pay';
-import Dashboard from './pages/Dashboard';
-import AuthPage from './pages/Auth';
-import Settings from './pages/Settings';
-import PublicProfile from './pages/PublicProfile';
-import Donation from './pages/Donation';
-import TravelFund from './pages/TravelFund';
-import SidebarLayout from './components/SidebarLayout';
-import PublicFund from './pages/PublicFund';
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Toaster } from 'react-hot-toast'
+import Landing from './pages/Landing'
+import Auth from './pages/Auth'
+import Create from './pages/Create'
+import Dashboard from './pages/Dashboard'
+import Pay from './pages/Pay'
+import Settings from './pages/Settings'
+import Donation from './pages/Donation'
+import TravelFund from './pages/TravelFund'
+import PublicProfile from './pages/PublicProfile'
+import PublicFund from './pages/PublicFund'
+import TestRateLimit from './pages/TestRateLimit'
+import SidebarLayout from './components/SidebarLayout'
+import { ThemeProvider, useTheme } from './contexts/ThemeContext'
 
-
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
-  }
-
+function AppContent() {
+  const { isDark } = useTheme()
+  
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* صفحات عمومی */}
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/landing" element={<Landing />} />
-        <Route path="/u/:username" element={<PublicProfile />} />
-        <Route path="/pay/:slug" element={<Pay />} />
-        <Route path="/trip/:slug" element={<PublicFund />} />
-
-        {/* صفحات خصوصی با سایدبار */}
-        <Route path="/" element={
-          user ? <SidebarLayout><Create /></SidebarLayout> : <Landing />
-        } />
-        <Route path="/dashboard" element={
-          user ? <SidebarLayout><Dashboard /></SidebarLayout> : <Landing />
-        } />
-        <Route path="/donation" element={
-          user ? <SidebarLayout><Donation /></SidebarLayout> : <Landing />
-        } />
-        <Route path="/travel" element={
-          user ? <SidebarLayout><TravelFund /></SidebarLayout> : <Landing />
-        } />
-        <Route path="/settings" element={
-          user ? <SidebarLayout><Settings /></SidebarLayout> : <Landing />
-        } />
-      </Routes>
-    </BrowserRouter>
-  );
+    <>
+      <Toaster 
+        position="top-center"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: isDark ? '#1f2937' : '#fff',
+            color: isDark ? '#fff' : '#000',
+            borderRadius: '12px',
+            fontSize: '14px',
+          },
+        }}
+      />
+      <BrowserRouter>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/" element={<Landing />} />
+          <Route path="/auth" element={<Auth />} />
+          <Route path="/pay/:slug" element={<Pay />} />
+          <Route path="/u/:username" element={<PublicProfile />} />
+          <Route path="/trip/:slug" element={<PublicFund />} />
+          
+          {/* Protected Routes with Sidebar */}
+          <Route path="/create" element={
+            <SidebarLayout>
+              <Create />
+            </SidebarLayout>
+          } />
+          <Route path="/dashboard" element={
+            <SidebarLayout>
+              <Dashboard />
+            </SidebarLayout>
+          } />
+          <Route path="/settings" element={
+            <SidebarLayout>
+              <Settings />
+            </SidebarLayout>
+          } />
+          <Route path="/donation" element={
+            <SidebarLayout>
+              <Donation />
+            </SidebarLayout>
+          } />
+          <Route path="/travel" element={
+            <SidebarLayout>
+              <TravelFund />
+            </SidebarLayout>
+          } />
+          <Route path="/test-rate-limit" element={
+            <SidebarLayout>
+              <TestRateLimit />
+            </SidebarLayout>
+          } />
+        </Routes>
+      </BrowserRouter>
+    </>
+  )
 }
+
+function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  )
+}
+
+export default App

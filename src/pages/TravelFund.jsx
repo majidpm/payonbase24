@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
 import { ethers } from 'ethers';
+import { handleAppError, showSuccess } from '../lib/errorHandler';
+import { checkRateLimit } from '../lib/rateLimiter';
 
 export default function TravelFund() {
   const { isDark } = useTheme();
@@ -143,10 +145,10 @@ export default function TravelFund() {
   async function loadUser() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user) setUserId(user.id);
-    setLoading(false);
   }
 
   async function loadFunds() {
+    setLoading(true);
     try {
       const { data: fundsData } = await supabase
         .from('travel_funds')
@@ -168,11 +170,20 @@ export default function TravelFund() {
       setFundContributions(contributionsMap);
     } catch (err) {
       console.error('Error loading funds:', err);
+    } finally {
+      setLoading(false);
     }
   }
 
   async function createFund() {
     if (!validateFund()) return;
+
+    const rateLimit = await checkRateLimit('create-travel-fund');
+    if (!rateLimit.allowed) {
+      handleAppError({ message: rateLimit.error }, 'createFund');
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('travel_funds')
@@ -184,28 +195,35 @@ export default function TravelFund() {
           description: newFund.description?.trim() || null
         });
       if (error) throw error;
+      showSuccess(`Travel fund created! ${rateLimit.remaining} remaining`);
       setShowCreateFund(false);
       setNewFund({ title: '', target_amount: '', wallet_address: '', description: '' });
       setFundErrors({});
       await loadFunds();
     } catch (err) {
-      alert('Failed to create fund: ' + err.message);
+      handleAppError(err, 'createFund');
     }
   }
 
   async function deleteFund(id) {
     if (!window.confirm('Delete this fund? All contributions will be lost.')) return;
+
+    const originalFunds = [...funds];
+    setFunds(funds.filter(f => f.id !== id));
+
     try {
-      await supabase.from('travel_funds').delete().eq('id', id);
-      await loadFunds();
+      const { error } = await supabase.from('travel_funds').delete().eq('id', id);
+      if (error) throw error;
+      showSuccess('Fund deleted');
     } catch (err) {
-      alert('Failed to delete fund');
+      handleAppError(err, 'deleteFund');
+      setFunds(originalFunds);
     }
   }
 
   async function connectWallet() {
     if (typeof window.ethereum === 'undefined') {
-      alert('Please install MetaMask');
+      handleAppError({ message: 'Please install MetaMask' }, 'connectWallet');
       return;
     }
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
@@ -255,17 +273,17 @@ export default function TravelFund() {
       setDonateAmount({ ...donateAmount, [fundId]: '' });
       setDonateName({ ...donateName, [fundId]: '' });
       setDonateErrors({});
+      showSuccess('Donation successful!');
       await loadFunds();
-      alert('✅ Donation successful!');
     } catch (err) {
-      console.error('Donation error:', err);
-      alert('Donation failed: ' + (err.shortMessage || err.message));
+      handleAppError(err, 'donateToFund');
     } finally {
       setDonating(false);
     }
   }
 
   async function loadSplits() {
+    setLoading(true);
     try {
       const { data: splitsData } = await supabase
         .from('travel_splits')
@@ -275,6 +293,8 @@ export default function TravelFund() {
       setSplits(splitsData || []);
     } catch (err) {
       console.error('Error loading splits:', err);
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -291,6 +311,7 @@ export default function TravelFund() {
         .select()
         .single();
       if (error) throw error;
+      showSuccess('Split created!');
       setShowCreateSplit(false);
       setNewSplit({ title: '', host_name: '' });
       setSplitErrors({});
@@ -299,22 +320,29 @@ export default function TravelFund() {
       setSplitMembers([]);
       setSplitExpenses([]);
     } catch (err) {
-      alert('Failed to create split: ' + err.message);
+      handleAppError(err, 'createSplit');
     }
   }
 
   async function deleteSplit(id) {
     if (!window.confirm('Delete this split? All data will be lost.')) return;
+
+    const originalSplits = [...splits];
+    setSplits(splits.filter(s => s.id !== id));
+
     try {
-      await supabase.from('travel_splits').delete().eq('id', id);
-      setSplits(splits.filter(s => s.id !== id));
+      const { error } = await supabase.from('travel_splits').delete().eq('id', id);
+      if (error) throw error;
+      showSuccess('Split deleted');
+
       if (selectedSplit?.id === id) {
         setSelectedSplit(null);
         setSplitMembers([]);
         setSplitExpenses([]);
       }
     } catch (err) {
-      alert('Failed to delete split');
+      handleAppError(err, 'deleteSplit');
+      setSplits(originalSplits);
     }
   }
 
@@ -355,16 +383,21 @@ export default function TravelFund() {
       setNewMember({ name: '', pre_paid: '0' });
       setMemberErrors({});
     } catch (err) {
-      alert('Failed to add member');
+      handleAppError(err, 'addMember');
     }
   }
 
   async function removeMember(id) {
+    const originalMembers = [...splitMembers];
+    setSplitMembers(splitMembers.filter(m => m.id !== id));
+
     try {
-      await supabase.from('travel_split_members').delete().eq('id', id);
-      setSplitMembers(splitMembers.filter(m => m.id !== id));
+      const { error } = await supabase.from('travel_split_members').delete().eq('id', id);
+      if (error) throw error;
+      showSuccess('Member removed');
     } catch (err) {
-      alert('Failed to remove member');
+      handleAppError(err, 'removeMember');
+      setSplitMembers(originalMembers);
     }
   }
 
@@ -386,16 +419,21 @@ export default function TravelFund() {
       setNewExpense({ description: '', amount: '', paid_by: '' });
       setExpenseErrors({});
     } catch (err) {
-      alert('Failed to add expense');
+      handleAppError(err, 'addExpense');
     }
   }
 
   async function removeExpense(id) {
+    const originalExpenses = [...splitExpenses];
+    setSplitExpenses(splitExpenses.filter(e => e.id !== id));
+
     try {
-      await supabase.from('travel_split_expenses').delete().eq('id', id);
-      setSplitExpenses(splitExpenses.filter(e => e.id !== id));
+      const { error } = await supabase.from('travel_split_expenses').delete().eq('id', id);
+      if (error) throw error;
+      showSuccess('Expense removed');
     } catch (err) {
-      alert('Failed to remove expense');
+      handleAppError(err, 'removeExpense');
+      setSplitExpenses(originalExpenses);
     }
   }
 
@@ -462,14 +500,6 @@ export default function TravelFund() {
   // RENDER
   // ============================================
 
-  if (loading) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950 text-white' : 'bg-blue-50 text-gray-900'}`}>
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
   return (
     <div className={`min-h-screen w-full overflow-x-hidden ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
       <div className="w-full px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6">
@@ -504,7 +534,7 @@ export default function TravelFund() {
                   : isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              🧮 Split Expenses
+               Split Expenses
             </button>
           </div>
 
@@ -611,7 +641,26 @@ export default function TravelFund() {
               )}
 
               {/* Funds List */}
-              {funds.length === 0 ? (
+              {loading ? (
+                <div className="space-y-4">
+                  {[...Array(3)].map((_, i) => (
+                    <div key={i} className={`rounded-xl p-4 animate-pulse ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+                      <div className="flex items-start gap-3 mb-4">
+                        <div className={`w-10 h-10 rounded-full ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                        <div className="flex-1 space-y-2">
+                          <div className={`h-4 rounded w-3/4 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                          <div className={`h-3 rounded w-1/2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                        </div>
+                      </div>
+                      <div className={`h-3 rounded-full w-full mb-2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className={`h-16 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                        <div className={`h-16 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : funds.length === 0 ? (
                 <div className={`rounded-xl p-6 sm:p-8 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
                   <div className="text-4xl sm:text-5xl mb-3">🌍</div>
                   <h3 className={`text-base sm:text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -650,7 +699,7 @@ export default function TravelFund() {
                                 isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 hover:bg-red-100'
                               }`}
                             >
-                              ️
+                              🗑️
                             </button>
                           </div>
 
@@ -706,11 +755,11 @@ export default function TravelFund() {
                                 <button
                                   onClick={() => {
                                     navigator.clipboard.writeText(`${window.location.origin}/trip/${fund.slug}`);
-                                    alert('Link copied!');
+                                    showSuccess('Link copied!');
                                   }}
                                   className={`flex-shrink-0 px-3 py-2 rounded-lg font-medium text-xs ${isDark ? 'bg-blue-500 text-white' : 'bg-blue-600 text-white'}`}
                                 >
-                                  
+                                  📋
                                 </button>
                               </div>
                             </div>
@@ -759,7 +808,7 @@ export default function TravelFund() {
                                     disabled={donating}
                                     className="w-full px-4 py-2 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400"
                                   >
-                                    {donating ? '...' : 'Donate'}
+                                    {donating ? '⏳ Processing...' : 'Donate'}
                                   </button>
                                 )}
                               </div>
@@ -874,7 +923,27 @@ export default function TravelFund() {
               )}
 
               {/* Split Selection */}
-              {!selectedSplit && splits.length > 0 && (
+              {!selectedSplit && loading ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[...Array(2)].map((_, i) => (
+                    <div key={i} className={`rounded-xl p-4 animate-pulse ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+                      <div className={`h-4 rounded w-3/4 mb-2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                      <div className={`h-3 rounded w-1/2 mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                      <div className={`h-3 rounded w-1/4 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                    </div>
+                  ))}
+                </div>
+              ) : !selectedSplit && splits.length === 0 ? (
+                <div className={`rounded-xl p-6 sm:p-8 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+                  <div className="text-4xl sm:text-5xl mb-3">🧮</div>
+                  <h3 className={`text-base sm:text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    No Splits Yet
+                  </h3>
+                  <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Create your first expense split to track shared costs!
+                  </p>
+                </div>
+              ) : !selectedSplit && splits.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {splits.map((split) => (
                     <div
@@ -899,19 +968,7 @@ export default function TravelFund() {
                     </div>
                   ))}
                 </div>
-              )}
-
-              {!selectedSplit && splits.length === 0 && (
-                <div className={`rounded-xl p-6 sm:p-8 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                  <div className="text-4xl sm:text-5xl mb-3">🧮</div>
-                  <h3 className={`text-base sm:text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    No Splits Yet
-                  </h3>
-                  <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Create your first expense split to track shared costs!
-                  </p>
-                </div>
-              )}
+              ) : null}
 
               {/* Split Details */}
               {selectedSplit && (
