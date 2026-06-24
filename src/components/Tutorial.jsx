@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { supabase } from '../lib/supabase'
 import { useTheme } from '../contexts/ThemeContext'
 
 const TUTORIAL_STEPS = [
@@ -53,21 +54,51 @@ export default function Tutorial() {
   const location = useLocation()
   const [currentStep, setCurrentStep] = useState(0)
   const [isVisible, setIsVisible] = useState(false)
-  const highlightRef = useRef(null)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const highlightRef = useState(null)
 
+  // ✅ فقط برای کاربر لاگین‌کرده و فقط یک بار
   useEffect(() => {
-    const hasSeenTutorial = localStorage.getItem('hasSeenTutorial')
-    if (!hasSeenTutorial) {
-      const timer = setTimeout(() => {
-        setIsVisible(true)
-        // اول برو به dashboard
-        if (location.pathname !== '/dashboard') {
-          navigate('/dashboard')
+    let isMounted = true
+    
+    async function checkAuth() {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!isMounted) return
+      
+      if (!user) {
+        // کاربر لاگین نیست، tutorial نشون نده
+        setIsLoggedIn(false)
+        return
+      }
+      
+      setIsLoggedIn(true)
+      
+      // چک کن آیا قبلاً tutorial رو دیده
+      const hasSeenTutorial = localStorage.getItem('hasSeenTutorial')
+      
+      if (!hasSeenTutorial) {
+        // فقط تو صفحات داخلی (نه landing و auth) نشون بده
+        const publicPages = ['/', '/auth', '/pay/', '/u/', '/trip/', '/request/']
+        const isPublicPage = publicPages.some(page => location.pathname.startsWith(page))
+        
+        if (!isPublicPage) {
+          // 2 ثانیه تاخیر
+          setTimeout(() => {
+            if (isMounted) {
+              setIsVisible(true)
+            }
+          }, 2000)
         }
-      }, 1500)
-      return () => clearTimeout(timer)
+      }
     }
-  }, [navigate, location.pathname])
+    
+    checkAuth()
+    
+    return () => {
+      isMounted = false
+    }
+  }, [location.pathname])
 
   // Highlight element در هر step
   useEffect(() => {
@@ -75,7 +106,6 @@ export default function Tutorial() {
 
     const step = TUTORIAL_STEPS[currentStep]
     if (step.highlight) {
-      // صبر کن تا element لود بشه
       const timer = setTimeout(() => {
         const element = document.querySelector(step.highlight)
         if (element) {
@@ -83,7 +113,6 @@ export default function Tutorial() {
           element.classList.add('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
           highlightRef.current = element
           
-          // Remove highlight بعد از 2 ثانیه
           setTimeout(() => {
             element.classList.remove('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
           }, 2500)
@@ -114,14 +143,15 @@ export default function Tutorial() {
 
   const finishTutorial = () => {
     setIsVisible(false)
+    // ✅ ذخیره در localStorage که دیگه نیاد
     localStorage.setItem('hasSeenTutorial', 'true')
-    // Remove any remaining highlights
     if (highlightRef.current) {
       highlightRef.current.classList.remove('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
     }
   }
 
-  if (!isVisible) return null
+  // ✅ اگه کاربر لاگین نیست یا tutorial قبلاً دیده شده، هیچی نشون نده
+  if (!isVisible || !isLoggedIn) return null
 
   const step = TUTORIAL_STEPS[currentStep]
   const isLast = currentStep === TUTORIAL_STEPS.length - 1
@@ -129,13 +159,12 @@ export default function Tutorial() {
 
   return (
     <>
-      {/* Dark Overlay - با blur کمتر */}
+      {/* Dark Overlay */}
       <div 
         className="fixed inset-0 bg-black/40 z-50"
         onClick={(e) => {
-          // فقط اگه روی خود overlay کلیک شد (نه روی کارت)
           if (e.target === e.currentTarget) {
-            // هیچ کاری نکن - کاربر باید از دکمه‌ها استفاده کنه
+            // هیچ کاری نکن
           }
         }}
       />
@@ -205,7 +234,7 @@ export default function Tutorial() {
                 : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
             }`}
           >
-            {isLast ? '🎉 Get Started' : 'Next →'}
+            {isLast ? ' Get Started' : 'Next →'}
           </button>
         </div>
       </div>

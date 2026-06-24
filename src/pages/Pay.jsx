@@ -18,7 +18,6 @@ export default function Pay() {
   const [payerName, setPayerName] = useState('');
   const [message, setMessage] = useState('');
   const [paying, setPaying] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
 
   const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
@@ -43,7 +42,6 @@ export default function Pay() {
 
       // چک کردن expiry
       if (data.expires_at && new Date(data.expires_at) < new Date()) {
-        // آپدیت status در database
         await supabase
           .from('payment')
           .update({ status: 'expired' })
@@ -81,50 +79,63 @@ export default function Pay() {
     }
   }
 
+  // ✅ تابع formatAmount برای نمایش اعداد کوچک
+  function formatAmount(amount) {
+    const num = parseFloat(amount);
+    if (isNaN(num)) return '0.00';
+    
+    if (num < 0.01) {
+      return num.toFixed(6);
+    } else if (num < 1) {
+      return num.toFixed(4);
+    } else {
+      return num.toFixed(2);
+    }
+  }
+
   async function sendPayment() {
     if (!link || !account) {
       handleAppError({ message: 'Please connect your wallet' }, 'sendPayment');
       return;
     }
 
-    // چک کردن وضعیت لینک
     if (link.status !== 'active') {
       handleAppError({ message: 'This link is no longer active' }, 'sendPayment');
       return;
     }
 
-    // چک کردن expiry
     if (link.expires_at && new Date(link.expires_at) < new Date()) {
       handleAppError({ message: 'This link has expired' }, 'sendPayment');
       return;
     }
 
-    // چک کردن amount
     const paymentAmount = link.amount || amount;
     if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
       handleAppError({ message: 'Please enter a valid amount' }, 'sendPayment');
       return;
     }
 
-    // چک کردن fixed amount
-    if (link.amount && parseFloat(amount) !== parseFloat(link.amount)) {
-      handleAppError({ 
-        message: `This link requires exactly $${parseFloat(link.amount).toFixed(2)} USDC` 
-      }, 'sendPayment');
-      return;
+    // ✅ چک کردن fixed amount با precision بیشتر
+    if (link.amount) {
+      const linkAmount = parseFloat(link.amount);
+      const userAmount = parseFloat(amount);
+      
+      if (Math.abs(linkAmount - userAmount) > 0.000001) {
+        handleAppError({ 
+          message: `This link requires exactly $${formatAmount(link.amount)} USDC` 
+        }, 'sendPayment');
+        return;
+      }
     }
 
     setPaying(true);
 
     try {
-      // 1. باز کردن MetaMask
       const unlockedAccount = await ensureWalletUnlocked();
       setAccount(unlockedAccount);
 
-      // 2. چک کردن network
       await ensureBaseNetwork();
 
-      // 3. چک کردن موجودی
       const balance = await checkUSDCBalance(unlockedAccount);
       const finalAmount = parseFloat(paymentAmount);
 
@@ -136,7 +147,6 @@ export default function Pay() {
         return;
       }
 
-      // 4. ارسال تراکنش
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const contract = new ethers.Contract(USDC_ADDRESS, [
@@ -150,7 +160,6 @@ export default function Pay() {
 
       const receipt = await tx.wait();
 
-      // 5. آپدیت status در database
       await supabase
         .from('payment')
         .update({
@@ -161,7 +170,6 @@ export default function Pay() {
         })
         .eq('id', link.id);
 
-      // 6. ثبت در donations (برای tracking)
       await supabase
         .from('donations')
         .insert({
@@ -178,7 +186,7 @@ export default function Pay() {
       setAmount('');
       setPayerName('');
       setMessage('');
-      await loadLink(); // Reload to show paid status
+      await loadLink();
     } catch (err) {
       handleAppError(err, 'sendPayment');
     } finally {
@@ -243,19 +251,19 @@ export default function Pay() {
         <div className={`absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-pulse ${isDark ? 'bg-purple-600/10' : 'bg-purple-400/20'}`} />
       </div>
 
-      <div className="max-w-2xl mx-auto px-6 pt-12 pb-16 relative z-10">
-        <div className={`rounded-3xl shadow-2xl p-6 sm:p-8 border ${isDark ? 'bg-gray-900/80 border-gray-800 backdrop-blur-xl' : 'bg-white/80 border-white backdrop-blur-xl'}`}>
+      <div className="max-w-2xl mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-16 relative z-10">
+        <div className={`rounded-2xl sm:rounded-3xl shadow-2xl p-4 sm:p-8 border ${isDark ? 'bg-gray-900/80 border-gray-800 backdrop-blur-xl' : 'bg-white/80 border-white backdrop-blur-xl'}`}>
           
           {/* Header */}
           <div className="text-center mb-6">
-            <div className={`w-20 h-20 rounded-2xl mx-auto flex items-center justify-center text-4xl mb-4 ${
+            <div className={`w-16 h-16 sm:w-20 sm:h-20 rounded-2xl mx-auto flex items-center justify-center text-3xl sm:text-4xl mb-4 ${
               isPaid 
                 ? isDark ? 'bg-green-500/20' : 'bg-green-100'
                 : isDark ? 'bg-blue-500/20' : 'bg-blue-100'
             }`}>
-              {isPaid ? '✅' : isExpired ? '⌛' : isCancelled ? '❌' : '💳'}
+              {isPaid ? '✅' : isExpired ? '' : isCancelled ? '❌' : '💳'}
             </div>
-            <h1 className={`text-2xl sm:text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <h1 className={`text-xl sm:text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
               {link.title}
             </h1>
             {link.description && (
@@ -303,8 +311,8 @@ export default function Pay() {
               {link.amount ? 'Amount Due' : 'Enter Amount'}
             </p>
             {link.amount ? (
-              <p className={`text-4xl sm:text-5xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                ${parseFloat(link.amount).toFixed(2)}
+              <p className={`text-3xl sm:text-5xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                ${formatAmount(link.amount)}
               </p>
             ) : (
               <p className={`text-2xl sm:text-3xl font-bold ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
@@ -318,7 +326,7 @@ export default function Pay() {
 
           {/* Link Info */}
           <div className={`rounded-2xl p-4 mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div>
                 <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Created</p>
                 <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -348,7 +356,7 @@ export default function Pay() {
           {isPaid && (
             <div className={`rounded-2xl p-6 mb-6 ${isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
               <div className="text-center">
-                <div className="text-5xl mb-3"></div>
+                <div className="text-5xl mb-3">🎉</div>
                 <h3 className={`text-lg font-bold mb-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                   Payment Completed!
                 </h3>
@@ -360,25 +368,13 @@ export default function Pay() {
                     Paid on {formatDate(link.paid_at)}
                   </p>
                 )}
-                {link.tx_hash && (
-                  <a
-                    href={`https://basescan.org/tx/${link.tx_hash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`inline-block px-4 py-2 rounded-xl text-xs font-medium ${
-                      isDark ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-700'
-                    }`}
-                  >
-                    🔗 View on Basescan
-                  </a>
-                )}
               </div>
             </div>
           )}
 
           {/* Payment Form */}
           {isActive && (
-            <div className={`rounded-2xl p-6 ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
+            <div className={`rounded-2xl p-4 sm:p-6 ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
               <h3 className={`text-lg font-bold mb-4 ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
                 Complete Payment
               </h3>
@@ -396,7 +392,7 @@ export default function Pay() {
                       </span>
                       <input
                         type="number"
-                        step="0.01"
+                        step="0.000001"
                         placeholder="0.00"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
@@ -474,7 +470,7 @@ export default function Pay() {
                     >
                       {paying 
                         ? '⏳ Processing...' 
-                        : `💸 Pay ${link.amount ? '$' + parseFloat(link.amount).toFixed(2) : amount ? '$' + parseFloat(amount).toFixed(2) : ''} USDC`
+                        : `💸 Pay ${link.amount ? '$' + formatAmount(link.amount) : amount ? '$' + formatAmount(amount) : ''} USDC`
                       }
                     </button>
                   </>

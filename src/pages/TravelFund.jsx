@@ -146,7 +146,8 @@ useEffect(() => {
   }
 }, [userId, activeTab]);
 
-// ✅ اضافه کردن useEffect برای celebration
+
+// ✅ useEffect برای celebration - فقط یک بار
 useEffect(() => {
   if (funds.length > 0 && fundContributions) {
     funds.forEach(fund => {
@@ -155,6 +156,7 @@ useEffect(() => {
       const isComplete = totalCollected >= fund.target_amount;
       
       if (isComplete) {
+        // ✅ چک کن که قبلاً جشن نگرفتی
         const hasCelebrated = localStorage.getItem(`celebrated_fund_${fund.id}`);
         if (!hasCelebrated) {
           celebrateFundComplete();
