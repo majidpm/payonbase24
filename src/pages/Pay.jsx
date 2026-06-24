@@ -6,6 +6,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { handleAppError, showSuccess } from '../lib/errorHandler';
 import { ensureWalletUnlocked, checkUSDCBalance, ensureBaseNetwork } from '../lib/walletHelper';
 import { celebrateDonation } from '../lib/celebrations';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function Pay() {
   const { isDark } = useTheme();
@@ -160,15 +161,26 @@ export default function Pay() {
 
       const receipt = await tx.wait();
 
-      await supabase
-        .from('payment')
-        .update({
-          status: 'paid',
-          payer_name: payerName.trim() || 'Anonymous',
-          payer_address: unlockedAccount,
-          paid_at: new Date().toISOString()
-        })
-        .eq('id', link.id);
+    await supabase
+  .from('payment')
+  .update({
+    status: 'paid',
+    payer_name: payerName.trim() || 'Anonymous',
+    payer_address: unlockedAccount,
+    paid_at: new Date().toISOString(),
+    tx_hash: receipt.hash  
+  })
+  .eq('id', link.id);
+
+  // ✅ آپدیت link در state با tx_hash جدید
+setLink({
+  ...link,
+  status: 'paid',
+  payer_name: payerName.trim() || 'Anonymous',
+  payer_address: unlockedAccount,
+  paid_at: new Date().toISOString(),
+  tx_hash: receipt.hash
+});
 
       await supabase
         .from('donations')
@@ -322,7 +334,17 @@ export default function Pay() {
             <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
               USDC on Base Network
             </p>
+                      <div className="flex justify-center mb-4">
+  <QRCodeSVG 
+    value={window.location.href}
+    size={128}
+    level="H"
+    includeMargin={false}
+    className={`rounded-xl ${isDark ? 'bg-white p-2' : 'bg-white p-2'}`}
+  />
+</div>
           </div>
+
 
           {/* Link Info */}
           <div className={`rounded-2xl p-4 mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
@@ -352,25 +374,60 @@ export default function Pay() {
             )}
           </div>
 
-          {/* Paid Info */}
-          {isPaid && (
-            <div className={`rounded-2xl p-6 mb-6 ${isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
-              <div className="text-center">
-                <div className="text-5xl mb-3">🎉</div>
-                <h3 className={`text-lg font-bold mb-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
-                  Payment Completed!
-                </h3>
-                <p className={`text-sm mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
-                  Thank you, {link.payer_name || 'Anonymous'}!
-                </p>
-                {link.paid_at && (
-                  <p className={`text-xs mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
-                    Paid on {formatDate(link.paid_at)}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+        {/* Paid Info */}
+{isPaid && (
+  <div className={`rounded-2xl p-6 mb-6 ${isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
+    <div className="text-center">
+      <div className="text-5xl mb-3">🎉</div>
+      <h3 className={`text-lg font-bold mb-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+        Payment Completed!
+      </h3>
+      <p className={`text-sm mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
+        Thank you, {link.payer_name || 'Anonymous'}!
+      </p>
+      {link.paid_at && (
+        <p className={`text-xs mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
+          Paid on {formatDate(link.paid_at)}
+        </p>
+      )}
+      
+      {/* ✅ نمایش tx_hash و لینک Basescan */}
+      {link.tx_hash && (
+        <div className={`mt-4 p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-white'}`}>
+          <p className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+            Transaction Hash
+          </p>
+          <p className={`font-mono text-xs break-all mb-3 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+            {link.tx_hash}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <a
+              href={`https://basescan.org/tx/${link.tx_hash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex-1 px-4 py-2 rounded-lg text-xs font-medium text-center transition ${
+                isDark ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              🔗 View on Basescan
+            </a>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(link.tx_hash);
+                showSuccess('Transaction hash copied!');
+              }}
+              className={`flex-1 px-4 py-2 rounded-lg text-xs font-medium transition ${
+                isDark ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              📋 Copy Hash
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
+)}
 
           {/* Payment Form */}
           {isActive && (

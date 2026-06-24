@@ -6,11 +6,21 @@ export const BASE_CHAIN_ID = '0x2105';
 // ✅ تابع برای باز کردن MetaMask (حتی اگه قفل باشه)
 export async function ensureWalletUnlocked() {
   if (typeof window.ethereum === 'undefined') {
-    throw new Error('MetaMask not installed');
+    // ✅ چک کردن آیا موبایل هست
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+      // ✅ هدایت به MetaMask Deep Link
+      const currentUrl = window.location.href;
+      const metamaskUrl = `https://metamask.app.link/dapp/${currentUrl}`;
+      window.location.href = metamaskUrl;
+      throw new Error('Opening MetaMask...');
+    } else {
+      throw new Error('Please install MetaMask browser extension');
+    }
   }
 
   try {
-    // این متد همیشه MetaMask رو باز می‌کنه اگه قفل باشه
     const accounts = await window.ethereum.request({ 
       method: 'eth_requestAccounts' 
     });

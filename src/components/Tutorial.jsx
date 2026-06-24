@@ -12,7 +12,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: '📊 Dashboard',
-    description: 'Track all your payment links, donations, and transactions here. You can filter by date and status.',
+    description: 'Track all your payment links, donations, and transactions here.',
     highlight: '[data-tour="dashboard"]',
     position: 'bottom'
   },
@@ -24,13 +24,13 @@ const TUTORIAL_STEPS = [
   },
   {
     title: '💝 Donation Page',
-    description: 'Set up your public donation page and receive support from anyone in the world!',
+    description: 'Set up your public donation page and receive support from anyone!',
     highlight: '[data-tour="donation"]',
     position: 'right'
   },
   {
-    title: '✈️ Travel Fund',
-    description: 'Fund your trips and split expenses with friends and family easily.',
+    title: '️ Travel Fund',
+    description: 'Fund your trips and split expenses with friends and family.',
     highlight: '[data-tour="travel"]',
     position: 'right'
   },
@@ -42,7 +42,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: '🎉 You\'re Ready!',
-    description: 'That\'s it! You\'re all set to start using PayOnBase24. Happy transacting!',
+    description: 'That\'s it! You\'re all set to start using PayOnBase24.',
     highlight: null,
     position: 'center'
   }
@@ -55,9 +55,7 @@ export default function Tutorial() {
   const [currentStep, setCurrentStep] = useState(0)
   const [isVisible, setIsVisible] = useState(false)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const highlightRef = useState(null)
 
-  // ✅ فقط برای کاربر لاگین‌کرده و فقط یک بار
   useEffect(() => {
     let isMounted = true
     
@@ -67,23 +65,20 @@ export default function Tutorial() {
       if (!isMounted) return
       
       if (!user) {
-        // کاربر لاگین نیست، tutorial نشون نده
         setIsLoggedIn(false)
         return
       }
       
       setIsLoggedIn(true)
       
-      // چک کن آیا قبلاً tutorial رو دیده
       const hasSeenTutorial = localStorage.getItem('hasSeenTutorial')
       
       if (!hasSeenTutorial) {
-        // فقط تو صفحات داخلی (نه landing و auth) نشون بده
+        // فقط در صفحات داخلی (نه public pages)
         const publicPages = ['/', '/auth', '/pay/', '/u/', '/trip/', '/request/']
         const isPublicPage = publicPages.some(page => location.pathname.startsWith(page))
         
         if (!isPublicPage) {
-          // 2 ثانیه تاخیر
           setTimeout(() => {
             if (isMounted) {
               setIsVisible(true)
@@ -99,29 +94,6 @@ export default function Tutorial() {
       isMounted = false
     }
   }, [location.pathname])
-
-  // Highlight element در هر step
-  useEffect(() => {
-    if (!isVisible) return
-
-    const step = TUTORIAL_STEPS[currentStep]
-    if (step.highlight) {
-      const timer = setTimeout(() => {
-        const element = document.querySelector(step.highlight)
-        if (element) {
-          element.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          element.classList.add('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
-          highlightRef.current = element
-          
-          setTimeout(() => {
-            element.classList.remove('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
-          }, 2500)
-        }
-      }, 300)
-      
-      return () => clearTimeout(timer)
-    }
-  }, [currentStep, isVisible])
 
   const handleNext = () => {
     if (currentStep < TUTORIAL_STEPS.length - 1) {
@@ -143,14 +115,9 @@ export default function Tutorial() {
 
   const finishTutorial = () => {
     setIsVisible(false)
-    // ✅ ذخیره در localStorage که دیگه نیاد
     localStorage.setItem('hasSeenTutorial', 'true')
-    if (highlightRef.current) {
-      highlightRef.current.classList.remove('ring-4', 'ring-blue-500', 'ring-opacity-50', 'rounded-xl')
-    }
   }
 
-  // ✅ اگه کاربر لاگین نیست یا tutorial قبلاً دیده شده، هیچی نشون نده
   if (!isVisible || !isLoggedIn) return null
 
   const step = TUTORIAL_STEPS[currentStep]
@@ -159,31 +126,18 @@ export default function Tutorial() {
 
   return (
     <>
-      {/* Dark Overlay */}
-      <div 
-        className="fixed inset-0 bg-black/40 z-50"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) {
-            // هیچ کاری نکن
-          }
-        }}
-      />
+      <div className="fixed inset-0 bg-black/40 z-50" />
 
-      {/* Tutorial Card */}
       <div 
         className={`fixed z-50 max-w-md w-full mx-4 rounded-2xl shadow-2xl border p-6 ${
-          isDark 
-            ? 'bg-gray-900 border-gray-700' 
-            : 'bg-white border-gray-200'
+          isDark ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
         }`}
         style={{
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          pointerEvents: 'auto'
         }}
       >
-        {/* Progress Bar */}
         <div className={`w-full h-1.5 rounded-full mb-4 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}>
           <div 
             className="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500"
@@ -191,7 +145,6 @@ export default function Tutorial() {
           />
         </div>
 
-        {/* Step Counter */}
         <div className="flex justify-between items-center mb-3">
           <span className={`text-xs font-medium ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
             Step {currentStep + 1} of {TUTORIAL_STEPS.length}
@@ -204,7 +157,6 @@ export default function Tutorial() {
           </button>
         </div>
 
-        {/* Content */}
         <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {step.title}
         </h2>
@@ -212,15 +164,12 @@ export default function Tutorial() {
           {step.description}
         </p>
 
-        {/* Actions */}
         <div className="flex gap-3">
           {currentStep > 0 && (
             <button
               onClick={handleBack}
-              className={`flex-1 py-3 rounded-xl font-semibold text-sm transition-all ${
-                isDark 
-                  ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' 
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+              className={`flex-1 py-3 rounded-xl font-semibold text-sm ${
+                isDark ? 'bg-gray-800 text-gray-300' : 'bg-gray-100 text-gray-700'
               }`}
             >
               ← Back
@@ -228,13 +177,13 @@ export default function Tutorial() {
           )}
           <button
             onClick={handleNext}
-            className={`flex-1 py-3 rounded-xl font-semibold text-sm transition-all hover:scale-105 ${
+            className={`flex-1 py-3 rounded-xl font-semibold text-sm hover:scale-105 transition-all ${
               isLast
-                ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white'
-                : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white'
+                : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white'
             }`}
           >
-            {isLast ? ' Get Started' : 'Next →'}
+            {isLast ? '🎉 Get Started' : 'Next →'}
           </button>
         </div>
       </div>

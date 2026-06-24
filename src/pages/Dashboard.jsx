@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
 import { handleAppError, showSuccess } from '../lib/errorHandler';
-import { StatsSkeleton, ListSkeleton } from '../components/Skeleton';
 
 export default function Dashboard() {
   const { isDark } = useTheme();
@@ -22,6 +22,7 @@ export default function Dashboard() {
   const [filter, setFilter] = useState('all');
   const [sortBy, setSortBy] = useState('date');
   const [searchQuery, setSearchQuery] = useState('');
+  const [qrSlug, setQrSlug] = useState(null);
 
   useEffect(() => {
     loadUser();
@@ -47,7 +48,6 @@ export default function Dashboard() {
 
       if (error) throw error;
 
-      // چک کردن expiry برای همه لینک‌ها
       const updatedPayments = await Promise.all(
         (data || []).map(async (p) => {
           if (p.status === 'active' && p.expires_at && new Date(p.expires_at) < new Date()) {
@@ -132,7 +132,11 @@ export default function Dashboard() {
     showSuccess('Link copied!');
   }
 
-  // ✅ تابع formatAmount برای نمایش اعداد کوچک
+  function copyHash(txHash) {
+    navigator.clipboard.writeText(txHash);
+    showSuccess('Transaction hash copied!');
+  }
+
   function formatAmount(amount) {
     const num = parseFloat(amount);
     if (isNaN(num)) return '0.00';
@@ -181,37 +185,48 @@ export default function Dashboard() {
   }
 
   function getFilteredPayments() {
-    let filtered = [...payments];
+    try {
+      let filtered = [...payments];
 
-    if (filter !== 'all') {
-      filtered = filtered.filter(p => {
-        if (filter === 'active') return p.status === 'active';
-        if (filter === 'paid') return p.status === 'paid';
-        if (filter === 'expired') return p.status === 'expired';
-        if (filter === 'cancelled') return p.status === 'cancelled';
-        return true;
-      });
+      if (filter !== 'all') {
+        filtered = filtered.filter(p => {
+          if (filter === 'active') return p.status === 'active';
+          if (filter === 'paid') return p.status === 'paid';
+          if (filter === 'expired') return p.status === 'expired';
+          if (filter === 'cancelled') return p.status === 'cancelled';
+          return true;
+        });
+      }
+
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        filtered = filtered.filter(p => {
+          try {
+            return (
+              (p.title && p.title.toLowerCase().includes(query)) ||
+              (p.description && p.description.toLowerCase().includes(query)) ||
+              (p.payer_name && p.payer_name.toLowerCase().includes(query))
+            );
+          } catch {
+            return false;
+          }
+        });
+      }
+
+      if (sortBy === 'amount') {
+        filtered.sort((a, b) => (parseFloat(b.amount) || 0) - (parseFloat(a.amount) || 0));
+      } else if (sortBy === 'date') {
+        filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      } else if (sortBy === 'status') {
+        const statusOrder = { active: 0, paid: 1, expired: 2, cancelled: 3 };
+        filtered.sort((a, b) => (statusOrder[a.status] || 0) - (statusOrder[b.status] || 0));
+      }
+
+      return filtered;
+    } catch (err) {
+      console.error('Filter error:', err);
+      return payments;
     }
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(p => 
-        p.title.toLowerCase().includes(query) ||
-        (p.description && p.description.toLowerCase().includes(query)) ||
-        (p.payer_name && p.payer_name.toLowerCase().includes(query))
-      );
-    }
-
-    if (sortBy === 'amount') {
-      filtered.sort((a, b) => (b.amount || 0) - (a.amount || 0));
-    } else if (sortBy === 'date') {
-      filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    } else if (sortBy === 'status') {
-      const statusOrder = { active: 0, paid: 1, expired: 2, cancelled: 3 };
-      filtered.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
-    }
-
-    return filtered;
   }
 
   const filteredPayments = getFilteredPayments();
@@ -238,7 +253,20 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
-            <ListSkeleton count={4} />
+            <div className="space-y-3">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className={`rounded-xl sm:rounded-2xl p-4 sm:p-6 animate-pulse ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
+                  <div className="flex gap-3 mb-3">
+                    <div className={`w-10 h-10 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                    <div className="flex-1 space-y-2">
+                      <div className={`h-4 rounded w-3/4 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                      <div className={`h-3 rounded w-1/2 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                    </div>
+                  </div>
+                  <div className={`h-10 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -269,7 +297,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Stats Cards - Responsive Grid */}
+          {/* Stats Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-4 sm:mb-8">
             <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
               <div className="flex items-center justify-between mb-1 sm:mb-2">
@@ -356,7 +384,7 @@ export default function Dashboard() {
           {/* Payments List */}
           {filteredPayments.length === 0 ? (
             <div className={`rounded-xl sm:rounded-2xl p-6 sm:p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-              <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">🎯</div>
+              <div className="text-4xl sm:text-6xl mb-3 sm:mb-4"></div>
               <h3 className={`text-base sm:text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {payments.length === 0 ? 'No Payment Links Yet' : 'No Results Found'}
               </h3>
@@ -439,7 +467,7 @@ export default function Dashboard() {
                           onClick={() => copyLink(p.slug)}
                           className="px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg font-medium text-xs sm:text-sm bg-blue-600 text-white hover:bg-blue-700"
                         >
-                          📋
+                          
                         </button>
                       </div>
                     </div>
@@ -451,7 +479,7 @@ export default function Dashboard() {
                       </span>
                       {p.expires_at && (
                         <span className={isExpired ? 'text-red-500 font-medium' : isDark ? 'text-gray-400' : 'text-gray-600'}>
-                           {formatDate(p.expires_at)}
+                          ⏰ {formatDate(p.expires_at)}
                         </span>
                       )}
                       {p.payer_name && displayStatus === 'paid' && (
@@ -479,6 +507,14 @@ export default function Dashboard() {
                             🔗 Copy
                           </button>
                           <button
+                            onClick={() => setQrSlug(p.slug)}
+                            className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium transition ${
+                              isDark ? 'bg-purple-900/30 text-purple-400 hover:bg-purple-900/50' : 'bg-purple-50 text-purple-700 hover:bg-purple-100'
+                            }`}
+                          >
+                            📱 QR Code
+                          </button>
+                          <button
                             onClick={() => cancelLink(p.id)}
                             className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium transition ${
                               isDark ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
@@ -486,20 +522,34 @@ export default function Dashboard() {
                           >
                             Cancel
                           </button>
+                          
                         </>
                       )}
-                      {displayStatus === 'paid' && p.tx_hash && (
-                        <a
-                          href={`https://basescan.org/tx/${p.tx_hash}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium transition ${
-                            isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                          }`}
-                        >
-                           Basescan
-                        </a>
-                      )}
+                      
+                   {/* Basescan + Copy Hash - برای paid links */}
+{displayStatus === 'paid' && p.tx_hash && (
+  <div className="w-full flex flex-col sm:flex-row gap-2 mb-2">
+    <a
+      href={`https://basescan.org/tx/${p.tx_hash}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium text-center transition ${
+        isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+    >
+      🔗 View on Basescan
+    </a>
+    <button
+      onClick={() => copyHash(p.tx_hash)}
+      className={`flex-1 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium transition ${
+        isDark ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+      }`}
+    >
+      📋 Copy Hash
+    </button>
+  </div>
+)}
+                      
                       <button
                         onClick={() => deleteLink(p.id)}
                         className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs font-medium transition ${
@@ -527,6 +577,54 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* QR Code Modal */}
+      {qrSlug && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" 
+          onClick={() => setQrSlug(null)}
+        >
+          <div 
+            className={`rounded-2xl p-6 max-w-sm w-full ${isDark ? 'bg-gray-900 border border-gray-800' : 'bg-white border border-gray-200'}`} 
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className={`text-lg font-bold mb-4 text-center ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              📱 QR Code
+            </h3>
+            <div className="flex justify-center mb-4">
+              <QRCodeSVG 
+                value={`${window.location.origin}/pay/${qrSlug}`}
+                size={200}
+                level="H"
+                includeMargin={false}
+                className="rounded-xl bg-white p-4"
+              />
+            </div>
+            <p className={`text-xs text-center mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              Scan to open payment link
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`${window.location.origin}/pay/${qrSlug}`);
+                  showSuccess('Link copied!');
+                }}
+                className={`flex-1 py-2 rounded-xl font-semibold text-sm ${
+                  isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                📋 Copy Link
+              </button>
+              <button
+                onClick={() => setQrSlug(null)}
+                className="flex-1 py-2 rounded-xl bg-blue-600 text-white font-semibold text-sm hover:bg-blue-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
