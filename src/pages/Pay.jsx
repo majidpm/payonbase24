@@ -1,613 +1,493 @@
-import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
-import { ethers } from 'ethers'
-import { supabase } from '../lib/supabase'
-import QRCode from 'react-qr-code'
-import { useTheme } from '../contexts/ThemeContext'
-import { handleAppError, showSuccess } from '../lib/errorHandler'
-import Navbar from '../components/Navbar'
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ethers } from 'ethers';
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../contexts/ThemeContext';
+import { handleAppError, showSuccess } from '../lib/errorHandler';
+import { ensureWalletUnlocked, checkUSDCBalance, ensureBaseNetwork } from '../lib/walletHelper';
+import { celebrateDonation } from '../lib/celebrations';
 
 export default function Pay() {
-  const { isDark } = useTheme()
-  const { slug } = useParams()
-  const navigate = useNavigate()
-  const [account, setAccount] = useState('')
-  const [status, setStatus] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [payment, setPayment] = useState(null)
-  const [copiedTx, setCopiedTx] = useState(false)
-  const [user, setUser] = useState(null)
-  const [signatureValid, setSignatureValid] = useState(false)
-  const [signatureLoading, setSignatureLoading] = useState(false)
-  const [walletConnecting, setWalletConnecting] = useState(false)
-  const [needsSign, setNeedsSign] = useState(false)
-  const [payerAddress, setPayerAddress] = useState(null)
+  const { isDark } = useTheme();
+  const { slug } = useParams();
+  const navigate = useNavigate();
+  const [link, setLink] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [account, setAccount] = useState('');
+  const [amount, setAmount] = useState('');
+  const [payerName, setPayerName] = useState('');
+  const [message, setMessage] = useState('');
+  const [paying, setPaying] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
-  const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
-
-  const isWalletInstalled = () => {
-    return typeof window.ethereum !== 'undefined'
-  }
+  const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
   useEffect(() => {
-    loadPayment()
-    loadUser()
-    const interval = setInterval(checkPaymentStatus, 3000)
-    return () => clearInterval(interval)
-  }, [])
+    loadLink();
+    checkWallet();
+  }, [slug]);
 
-  async function loadUser() {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
-    } catch (err) {
-      console.error('Load user error:', err)
-    }
-  }
-
-  async function loadPayment() {
+  async function loadLink() {
+    setLoading(true);
     try {
       const { data, error } = await supabase
         .from('payment')
         .select('*')
         .eq('slug', slug)
-        .single()
-      
-      if (error) throw error
-      setPayment(data)
-      if (data.paid && data.payer_address) {
-        setPayerAddress(data.payer_address)
+        .single();
+
+      if (error || !data) {
+        setLink(null);
+        return;
+      }
+
+      // چک کردن expiry
+      if (data.expires_at && new Date(data.expires_at) < new Date()) {
+        // آپدیت status در database
+        await supabase
+          .from('payment')
+          .update({ status: 'expired' })
+          .eq('id', data.id);
+        
+        setLink({ ...data, status: 'expired' });
+      } else {
+        setLink(data);
       }
     } catch (err) {
-      handleAppError(err, 'loadPayment')
+      handleAppError(err, 'loadLink');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
-  async function signMessage() {
-    if (!account) {
-      handleAppError({ message: 'Please connect wallet first' }, 'signMessage')
-      return
-    }
-    if (!isWalletInstalled()) {
-      handleAppError({ message: 'Please install MetaMask!' }, 'signMessage')
-      return
-    }
-    
-    setSignatureLoading(true)
-    setStatus('⏳ Please sign the message in your wallet...')
-    
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      const signer = await provider.getSigner()
-      const message = `PayonBase24 - Wallet Verification
-Domain: ${window.location.origin}
-Address: ${account}
-Timestamp: ${Date.now()}
-Expires: 1 hour`
-      
-      const signature = await signer.signMessage(message)
-      
-      const { error } = await supabase
-        .from('wallet_signatures')
-        .insert({
-          wallet_address: account,
-          signature: signature,
-          message: message,
-          user_id: user?.id || null,
-          expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-        })
-      
-      if (error) throw error
-      
-      setSignatureValid(true)
-      setNeedsSign(false)
-      showSuccess('Wallet verified successfully!')
-    } catch (err) {
-      handleAppError(err, 'signMessage')
-      setSignatureValid(false)
-      setNeedsSign(true)
-    } finally {
-      setSignatureLoading(false)
-    }
-  }
-
-  async function checkPaymentStatus() {
-    if (!payment || payment.paid) return
-    try {
-      const { data, error } = await supabase
-        .from('payment')
-        .select('paid, tx_hash, payer_address, is_active')
-        .eq('slug', slug)
-        .single()
-      
-      if (error) throw error
-      
-      if (data.paid && !payment.paid) {
-        setPayment(prev => ({
-          ...prev,
-          paid: true,
-          tx_hash: data.tx_hash,
-          payer_address: data.payer_address,
-          is_active: false
-        }))
-        setPayerAddress(data.payer_address)
-        showSuccess('Payment Successful!')
+  async function checkWallet() {
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+        if (accounts.length > 0) setAccount(accounts[0]);
+      } catch (err) {
+        console.error('Wallet check error:', err);
       }
-    } catch (err) {
-      console.error('Status check error:', err)
     }
   }
 
   async function connectWallet() {
     try {
-      if (!isWalletInstalled()) {
-        handleAppError({ message: 'Please install a Web3 wallet' }, 'connectWallet')
-        return
-      }
-      
-      setWalletConnecting(true)
-      setStatus('⏳ Connecting wallet...')
-      
-      const accounts = await window.ethereum.request({
-        method: 'eth_requestAccounts'
-      })
-      
-      if (accounts && accounts.length > 0) {
-        const address = accounts[0]
-        setAccount(address)
-        setStatus('✅ Wallet connected!')
-        showSuccess('Wallet connected successfully!')
-      } else {
-        handleAppError({ message: 'No accounts found' }, 'connectWallet')
-      }
+      const unlockedAccount = await ensureWalletUnlocked();
+      setAccount(unlockedAccount);
+      showSuccess('Wallet connected!');
     } catch (err) {
-      handleAppError(err, 'connectWallet')
-    } finally {
-      setWalletConnecting(false)
+      handleAppError(err, 'connectWallet');
     }
   }
 
-  async function pay() {
-    if (payment.is_active === false) {
-      handleAppError({ message: 'This payment link is no longer active' }, 'pay')
-      return
+  async function sendPayment() {
+    if (!link || !account) {
+      handleAppError({ message: 'Please connect your wallet' }, 'sendPayment');
+      return;
     }
-    if (payment.paid) {
-      handleAppError({ message: 'This payment has already been completed' }, 'pay')
-      return
+
+    // چک کردن وضعیت لینک
+    if (link.status !== 'active') {
+      handleAppError({ message: 'This link is no longer active' }, 'sendPayment');
+      return;
     }
-    if (payment.expires_at && new Date() > new Date(payment.expires_at)) {
-      handleAppError({ message: 'This payment link has expired' }, 'pay')
-      return
+
+    // چک کردن expiry
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      handleAppError({ message: 'This link has expired' }, 'sendPayment');
+      return;
     }
-    if (!account) {
-      handleAppError({ message: 'Please connect your wallet first' }, 'pay')
-      return
+
+    // چک کردن amount
+    const paymentAmount = link.amount || amount;
+    if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
+      handleAppError({ message: 'Please enter a valid amount' }, 'sendPayment');
+      return;
     }
-    if (!signatureValid) {
-      handleAppError({ message: 'Please sign to verify your wallet first' }, 'pay')
-      return
+
+    // چک کردن fixed amount
+    if (link.amount && parseFloat(amount) !== parseFloat(link.amount)) {
+      handleAppError({ 
+        message: `This link requires exactly $${parseFloat(link.amount).toFixed(2)} USDC` 
+      }, 'sendPayment');
+      return;
     }
-    if (!isWalletInstalled()) {
-      handleAppError({ message: 'Please install MetaMask!' }, 'pay')
-      return
-    }
-    
+
+    setPaying(true);
+
     try {
-      const BASE_CHAIN_ID = '0x2105'
-      const currentChain = await window.ethereum.request({ method: 'eth_chainId' })
-      
-      if (currentChain !== BASE_CHAIN_ID) {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_CHAIN_ID }]
-        })
+      // 1. باز کردن MetaMask
+      const unlockedAccount = await ensureWalletUnlocked();
+      setAccount(unlockedAccount);
+
+      // 2. چک کردن network
+      await ensureBaseNetwork();
+
+      // 3. چک کردن موجودی
+      const balance = await checkUSDCBalance(unlockedAccount);
+      const finalAmount = parseFloat(paymentAmount);
+
+      if (balance < finalAmount) {
+        handleAppError({
+          message: `Insufficient USDC balance. You have ${balance.toFixed(2)} USDC, but need ${finalAmount.toFixed(2)} USDC`
+        }, 'sendPayment');
+        setPaying(false);
+        return;
       }
-      
-      const provider = new ethers.BrowserProvider(window.ethereum)
-      const signer = await provider.getSigner()
+
+      // 4. ارسال تراکنش
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
       const contract = new ethers.Contract(USDC_ADDRESS, [
         'function transfer(address to, uint amount) returns (bool)'
-      ], signer)
-      
-      setStatus('⏳ Opening MetaMask...')
+      ], signer);
+
       const tx = await contract.transfer(
-        payment.recipient,
-        ethers.parseUnits(payment.amount.toString(), 6)
-      )
-      
-      setStatus('⏳ Waiting for confirmation...')
-      const receipt = await tx.wait()
-      
+        link.wallet_address,
+        ethers.parseUnits(finalAmount.toString(), 6)
+      );
+
+      const receipt = await tx.wait();
+
+      // 5. آپدیت status در database
       await supabase
         .from('payment')
         .update({
-          paid: true,
-          tx_hash: receipt.hash,
-          payer_address: account,
-          is_active: false
+          status: 'paid',
+          payer_name: payerName.trim() || 'Anonymous',
+          payer_address: unlockedAccount,
+          paid_at: new Date().toISOString()
         })
-        .eq('slug', slug)
-      
-      showSuccess('Payment Successful!')
-      setPayment(prev => ({
-        ...prev,
-        paid: true,
-        tx_hash: receipt.hash,
-        payer_address: account,
-        is_active: false
-      }))
-      setPayerAddress(account)
+        .eq('id', link.id);
+
+      // 6. ثبت در donations (برای tracking)
+      await supabase
+        .from('donations')
+        .insert({
+          profile_id: link.user_id,
+          donor_address: unlockedAccount,
+          amount: finalAmount,
+          message: message.trim() || `Payment for: ${link.title}`,
+          tx_hash: receipt.hash,
+          verified: true
+        });
+
+      showSuccess('Payment successful! Thank you! 🎉');
+      celebrateDonation();
+      setAmount('');
+      setPayerName('');
+      setMessage('');
+      await loadLink(); // Reload to show paid status
     } catch (err) {
-      handleAppError(err, 'pay')
+      handleAppError(err, 'sendPayment');
+    } finally {
+      setPaying(false);
     }
   }
 
-  function copyTxHash() {
-    try {
-      if (payment?.tx_hash) {
-        navigator.clipboard.writeText(payment.tx_hash)
-        setCopiedTx(true)
-        showSuccess('Transaction hash copied!')
-        setTimeout(() => setCopiedTx(false), 2000)
-      }
-    } catch (err) {
-      handleAppError(err, 'copyTxHash')
-    }
+  function formatAddress(address) {
+    if (!address) return '';
+    return `${address.substring(0, 6)}...${address.substring(38)}`;
   }
 
-  function viewOnBasescan() {
-    if (payment?.tx_hash) {
-      window.open(`https://basescan.org/tx/${payment.tx_hash}`, '_blank')
-    }
+  function formatDate(date) {
+    return new Date(date).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   }
 
-  function goToCreate() {
-    navigate('/create')
-  }
-
-
-
-  if (loading) return (
-    <div className={`min-h-screen flex items-center justify-center text-xl sm:text-2xl transition-colors duration-300 ${
-      isDark ? 'bg-gray-950 text-white' : 'bg-blue-50 text-gray-900'
-    }`}>
-      Loading...
-    </div>
-  );
-
-  if (!payment) return (
-    <div className={`min-h-screen flex items-center justify-center text-red-500 text-xl sm:text-2xl transition-colors duration-300 ${
-      isDark ? 'bg-gray-950' : 'bg-blue-50'
-    }`}>
-      Payment link not found
-    </div>
-  );
-
-  const paymentLink = `${window.location.origin}/pay/${payment.slug}`;
-  const isPayer = account && payerAddress && account.toLowerCase() === payerAddress.toLowerCase();
-
-  // ============================================
-  // اگر لینک پرداخت شده
-  // ============================================
-  if (payment.paid) {
+  if (loading) {
     return (
-      <div className={`min-h-screen transition-colors duration-300 ${
-        isDark ? 'bg-gray-950' : 'bg-blue-50'
-      }`}>
-        <Navbar />
-        <div className="flex items-center justify-center p-4 pt-8 sm:pt-10">
-          <div className={`max-w-lg w-full rounded-3xl shadow-2xl overflow-hidden border transition-colors duration-300 ${
-            isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'
-          }`}>
-            <div className={`p-4 sm:p-6 text-center transition-colors duration-300 ${
-              isDark ? 'bg-blue-600' : 'bg-gradient-to-r from-blue-600 to-blue-700'
-            } text-white`}>
-              <h1 className="text-2xl sm:text-3xl font-bold">Payment Request</h1>
-              <p className="mt-1 opacity-90 text-sm sm:text-base">USDC on Base Network</p>
+      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+      </div>
+    );
+  }
+
+  if (!link) {
+    return (
+      <div className={`min-h-screen flex flex-col items-center justify-center ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+        <div className="text-center px-6">
+          <div className="text-7xl mb-4">👻</div>
+          <h1 className={`text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Link Not Found
+          </h1>
+          <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            This payment link doesn't exist or has been removed.
+          </p>
+          <button
+            onClick={() => navigate('/')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl font-semibold"
+          >
+            Go Home
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const isExpired = link.status === 'expired' || (link.expires_at && new Date(link.expires_at) < new Date());
+  const isPaid = link.status === 'paid';
+  const isCancelled = link.status === 'cancelled';
+  const isActive = link.status === 'active' && !isExpired;
+
+  return (
+    <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50'}`}>
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+        <div className={`absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-pulse ${isDark ? 'bg-blue-600/10' : 'bg-blue-400/20'}`} />
+        <div className={`absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-pulse ${isDark ? 'bg-purple-600/10' : 'bg-purple-400/20'}`} />
+      </div>
+
+      <div className="max-w-2xl mx-auto px-6 pt-12 pb-16 relative z-10">
+        <div className={`rounded-3xl shadow-2xl p-6 sm:p-8 border ${isDark ? 'bg-gray-900/80 border-gray-800 backdrop-blur-xl' : 'bg-white/80 border-white backdrop-blur-xl'}`}>
+          
+          {/* Header */}
+          <div className="text-center mb-6">
+            <div className={`w-20 h-20 rounded-2xl mx-auto flex items-center justify-center text-4xl mb-4 ${
+              isPaid 
+                ? isDark ? 'bg-green-500/20' : 'bg-green-100'
+                : isDark ? 'bg-blue-500/20' : 'bg-blue-100'
+            }`}>
+              {isPaid ? '✅' : isExpired ? '⌛' : isCancelled ? '❌' : '💳'}
             </div>
-            <div className="p-4 sm:p-6">
-              {isPayer ? (
-                <div className="space-y-3 sm:space-y-4">
-                  <div className="text-center">
-                    <div className="text-5xl sm:text-6xl mb-3 sm:mb-4">✅</div>
-                    <h2 className={`text-xl sm:text-2xl font-bold mb-2 transition-colors duration-300 ${
-                      isDark ? 'text-white' : 'text-gray-900'
-                    }`}>
-                      Transaction Successful!
-                    </h2>
-                    <p className={`text-xs sm:text-sm transition-colors duration-300 ${
-                      isDark ? 'text-gray-400' : 'text-gray-500'
-                    }`}>
-                      Your payment was completed successfully
-                    </p>
-                  </div>
-                  <div className={`p-3 sm:p-4 rounded-2xl transition-colors duration-300 ${
-                    isDark ? 'bg-gray-800' : 'bg-gray-50'
-                  }`}>
-                    <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Transaction Hash
-                    </p>
-                    <p className={`font-mono text-xs break-all transition-colors duration-300 ${
-                      isDark ? 'text-gray-300' : 'text-gray-900'
-                    }`}>
-                      {payment.tx_hash}
-                    </p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <button
-                      onClick={copyTxHash}
-                      className={`flex-1 py-2 sm:py-3 rounded-2xl text-xs sm:text-sm font-medium transition-colors duration-300 ${
-                        isDark
-                          ? 'border border-gray-700 hover:bg-gray-800 text-gray-300'
-                          : 'bg-white border border-gray-300 hover:bg-gray-50 text-gray-700'
-                      }`}
-                    >
-                      {copiedTx ? '✅ Copied!' : 'Copy Tx Hash'}
-                    </button>
-                    <button
-                      onClick={viewOnBasescan}
-                      className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 sm:py-3 rounded-2xl text-xs sm:text-sm font-medium transition-colors"
-                    >
-                      View on Basescan
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-center py-4 sm:py-6">
-                  <div className="text-6xl sm:text-7xl mb-3 sm:mb-4">✅</div>
-                  <h2 className={`text-xl sm:text-2xl font-bold mb-2 transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-gray-900'
-                  }`}>
-                    Payment Completed
-                  </h2>
-                  <p className={`text-sm sm:text-base transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`}>
-                    This payment has already been processed.
+            <h1 className={`text-2xl sm:text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              {link.title}
+            </h1>
+            {link.description && (
+              <p className={`text-sm sm:text-base ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                {link.description}
+              </p>
+            )}
+          </div>
+
+          {/* Status Badge */}
+          <div className="flex justify-center mb-6">
+            {isPaid && (
+              <span className={`px-4 py-2 rounded-full text-sm font-medium ${
+                isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700'
+              }`}>
+                ✅ Paid
+              </span>
+            )}
+            {isExpired && (
+              <span className={`px-4 py-2 rounded-full text-sm font-medium ${
+                isDark ? 'bg-gray-800 text-gray-400' : 'bg-gray-100 text-gray-600'
+              }`}>
+                ⌛ Expired
+              </span>
+            )}
+            {isCancelled && (
+              <span className={`px-4 py-2 rounded-full text-sm font-medium ${
+                isDark ? 'bg-red-900/30 text-red-400' : 'bg-red-100 text-red-700'
+              }`}>
+                ❌ Cancelled
+              </span>
+            )}
+            {isActive && (
+              <span className={`px-4 py-2 rounded-full text-sm font-medium ${
+                isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-700'
+              }`}>
+                ✅ Active
+              </span>
+            )}
+          </div>
+
+          {/* Amount Display */}
+          <div className={`rounded-2xl p-6 text-center mb-6 ${isDark ? 'bg-gray-800' : 'bg-blue-50'}`}>
+            <p className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+              {link.amount ? 'Amount Due' : 'Enter Amount'}
+            </p>
+            {link.amount ? (
+              <p className={`text-4xl sm:text-5xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                ${parseFloat(link.amount).toFixed(2)}
+              </p>
+            ) : (
+              <p className={`text-2xl sm:text-3xl font-bold ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                Any Amount
+              </p>
+            )}
+            <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+              USDC on Base Network
+            </p>
+          </div>
+
+          {/* Link Info */}
+          <div className={`rounded-2xl p-4 mb-6 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Created</p>
+                <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {formatDate(link.created_at)}
+                </p>
+              </div>
+              {link.expires_at && (
+                <div>
+                  <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Expires</p>
+                  <p className={`font-medium ${isExpired ? 'text-red-500' : isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {formatDate(link.expires_at)}
                   </p>
                 </div>
               )}
-              <button
-                onClick={goToCreate}
-                className={`w-full mt-3 sm:mt-4 border py-2 sm:py-3 rounded-2xl text-sm sm:text-base font-semibold transition-all duration-300 ${
-                  isDark
-                    ? 'border-gray-700 hover:bg-gray-800 text-gray-300'
-                    : 'border-gray-300 hover:bg-gray-50 text-gray-700'
-                }`}
-              >
-                + Create New PayLink
-              </button>
             </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ============================================
-  // اگر لینک منقضی شده
-  // ============================================
-  if (payment.expires_at && new Date() > new Date(payment.expires_at)) {
-    return (
-      <div className={`min-h-screen transition-colors duration-300 ${
-        isDark ? 'bg-gray-950' : 'bg-blue-50'
-      }`}>
-        <Navbar />
-        <div className="flex items-center justify-center p-4 pt-8 sm:pt-10">
-          <div className={`max-w-md w-full mx-4 rounded-3xl shadow-2xl overflow-hidden border transition-colors duration-300 ${
-            isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'
-          }`}>
-            <div className={`p-6 sm:p-10 text-center transition-colors duration-300 ${
-              isDark ? 'bg-blue-600' : 'bg-gradient-to-r from-blue-600 to-blue-700'
-            } text-white`}>
-              <h1 className="text-2xl sm:text-3xl font-bold">Payment Request</h1>
-              <p className="mt-2 opacity-90 text-sm sm:text-base">USDC on Base Network</p>
-            </div>
-            <div className="p-6 sm:p-8 text-center">
-              <div className="text-6xl sm:text-7xl mb-4 sm:mb-6">⏰</div>
-              <h2 className={`text-xl sm:text-2xl font-bold mb-2 transition-colors duration-300 ${
-                isDark ? 'text-white' : 'text-gray-900'
-              }`}>
-                Payment Link Expired
-              </h2>
-              <p className={`text-sm sm:text-base transition-colors duration-300 ${
-                isDark ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                This payment link is no longer valid.
-              </p>
-              <button
-                onClick={goToCreate}
-                className={`w-full mt-4 sm:mt-6 border py-2 sm:py-3 rounded-2xl text-sm sm:text-base font-semibold transition-all duration-300 ${
-                  isDark
-                    ? 'border-gray-700 hover:bg-gray-800 text-gray-300'
-                    : 'border-gray-300 hover:bg-gray-50 text-gray-700'
-                }`}
-              >
-                + Create New PayLink
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ============================================
-  // صفحه اصلی پرداخت (برای لینک‌های فعال)
-  // ============================================
-  return (
-    <div className={`min-h-screen transition-colors duration-300 ${
-      isDark ? 'bg-gray-950' : 'bg-blue-50'
-    }`}>
-      <Navbar />
-      <div className="flex items-center justify-center p-4 pt-8 sm:pt-10">
-        <div className={`max-w-lg w-full rounded-3xl shadow-2xl overflow-hidden border transition-colors duration-300 ${
-          isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'
-        }`}>
-          <div className={`p-4 sm:p-6 text-center transition-colors duration-300 ${
-            isDark ? 'bg-blue-600' : 'bg-gradient-to-r from-blue-600 to-blue-700'
-          } text-white`}>
-            <h1 className="text-2xl sm:text-3xl font-bold">Payment Request</h1>
-            <p className="mt-1 opacity-90 text-sm sm:text-base">USDC on Base Network</p>
-          </div>
-          <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-            <div className="flex flex-col items-center">
-              <div className={`p-3 sm:p-4 rounded-2xl bg-white`}>
-                <QRCode
-                  value={paymentLink}
-                  size={150}
-                  bgColor="#ffffff"
-                  fgColor="#1e293b"
-                />
-              </div>
-              <p className={`text-xs mt-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                Scan with your phone to pay
-              </p>
-            </div>
-            <div className="text-center">
-              <p className={`text-xs sm:text-sm transition-colors duration-300 ${
-                isDark ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                Amount to Pay
-              </p>
-              <p className={`text-4xl sm:text-5xl font-bold mt-1 transition-colors duration-300 ${
-                isDark ? 'text-white' : 'text-gray-900'
-              }`}>
-                {payment.amount} <span className="text-xl sm:text-2xl">USDC</span>
-              </p>
-            </div>
-            <div className={`p-3 sm:p-4 rounded-2xl transition-colors duration-300 ${
-              isDark ? 'bg-gray-800' : 'bg-gray-50'
-            }`}>
-              <p className={`text-xs mb-1 transition-colors duration-300 ${
-                isDark ? 'text-gray-400' : 'text-gray-500'
-              }`}>
-                Recipient Address
-              </p>
-              <p className={`font-mono text-xs break-all transition-colors duration-300 ${
-                isDark ? 'text-gray-300' : 'text-gray-900'
-              }`}>
-                {payment.recipient.substring(0, 6)}...{payment.recipient.substring(payment.recipient.length - 4)}
-              </p>
-              {user && (
-                <p className={`font-mono text-xs break-all mt-1 pt-1 border-t ${
-                  isDark ? 'text-gray-400 border-gray-700' : 'text-gray-500 border-gray-200'
-                }`}>
-                  Full: {payment.recipient}
+            {link.wallet_address && (
+              <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Receiving Wallet</p>
+                <p className={`font-mono text-xs break-all ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {formatAddress(link.wallet_address)}
                 </p>
-              )}
+              </div>
+            )}
+          </div>
+
+          {/* Paid Info */}
+          {isPaid && (
+            <div className={`rounded-2xl p-6 mb-6 ${isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
+              <div className="text-center">
+                <div className="text-5xl mb-3"></div>
+                <h3 className={`text-lg font-bold mb-2 ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                  Payment Completed!
+                </h3>
+                <p className={`text-sm mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
+                  Thank you, {link.payer_name || 'Anonymous'}!
+                </p>
+                {link.paid_at && (
+                  <p className={`text-xs mb-4 ${isDark ? 'text-green-300' : 'text-green-600'}`}>
+                    Paid on {formatDate(link.paid_at)}
+                  </p>
+                )}
+                {link.tx_hash && (
+                  <a
+                    href={`https://basescan.org/tx/${link.tx_hash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`inline-block px-4 py-2 rounded-xl text-xs font-medium ${
+                      isDark ? 'bg-gray-800 text-gray-300' : 'bg-white text-gray-700'
+                    }`}
+                  >
+                    🔗 View on Basescan
+                  </a>
+                )}
+              </div>
             </div>
-            {!account ? (
-              !isWalletInstalled() ? (
-                <div className="space-y-3">
-                  <div className={`p-3 rounded-2xl border text-center ${
-                    isDark
-                      ? 'bg-yellow-950/30 border-yellow-800'
-                      : 'bg-yellow-50 border-yellow-200'
-                  }`}>
-                    <p className={`text-xs sm:text-sm font-medium ${isDark ? 'text-yellow-300' : 'text-yellow-800'}`}>
-                      ⚠️ No Web3 Wallet Detected
-                    </p>
-                    <p className={`text-xs mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                      A wallet is required to make payments
-                    </p>
+          )}
+
+          {/* Payment Form */}
+          {isActive && (
+            <div className={`rounded-2xl p-6 ${isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'}`}>
+              <h3 className={`text-lg font-bold mb-4 ${isDark ? 'text-blue-300' : 'text-blue-700'}`}>
+                Complete Payment
+              </h3>
+
+              <div className="space-y-4">
+                {/* Amount Input (اگه fixed amount نباشه) */}
+                {!link.amount && (
+                  <div>
+                    <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Amount (USDC) *
+                    </label>
+                    <div className="relative">
+                      <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        $
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        className={`w-full pl-8 pr-4 py-3 rounded-xl border focus:outline-none text-sm ${
+                          isDark
+                            ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+                            : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+                        }`}
+                      />
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <a
-                      href="https://metamask.io/download/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`flex-1 py-2 rounded-2xl text-xs sm:text-sm font-semibold text-center transition-colors duration-300 flex items-center justify-center gap-1 ${
-                        isDark
-                          ? 'bg-orange-600 hover:bg-orange-700 text-white'
-                          : 'bg-orange-500 hover:bg-orange-600 text-white'
-                      }`}
-                    >
-                      🦊 MetaMask
-                    </a>
-                    <a
-                      href="https://rabby.io/download"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`flex-1 py-2 rounded-2xl text-xs sm:text-sm font-semibold text-center transition-colors duration-300 flex items-center justify-center gap-1 ${
-                        isDark
-                          ? 'bg-purple-600 hover:bg-purple-700 text-white'
-                          : 'bg-purple-500 hover:bg-purple-600 text-white'
-                      }`}
-                    >
-                       Rabby
-                    </a>
-                  </div>
+                )}
+
+                {/* Payer Name */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Your Name *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Enter your name"
+                    value={payerName}
+                    onChange={(e) => setPayerName(e.target.value)}
+                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none text-sm ${
+                      isDark
+                        ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+                    }`}
+                  />
                 </div>
-              ) : (
-                <button
-                  onClick={connectWallet}
-                  disabled={walletConnecting}
-                  className={`w-full py-3 rounded-2xl text-base sm:text-lg font-semibold transition-colors duration-300 ${
-                    isDark
-                      ? 'bg-gray-700 hover:bg-gray-600 text-white disabled:bg-gray-800'
-                      : 'bg-gray-900 hover:bg-black text-white disabled:bg-gray-400'
-                  }`}
-                >
-                  {walletConnecting ? '⏳ Connecting...' : 'Connect Wallet'}
-                </button>
-              )
-            ) : signatureLoading ? (
-              <button
-                disabled
-                className={`w-full py-3 rounded-2xl text-base sm:text-lg font-semibold ${
-                  isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-500'
-                }`}
-              >
-                ⏳ Signing...
-              </button>
-            ) : !signatureValid ? (
-              <button
-                onClick={signMessage}
-                className={`w-full py-3 rounded-2xl text-base sm:text-lg font-semibold transition-colors duration-300 ${
-                  isDark
-                    ? 'bg-yellow-600 hover:bg-yellow-700 text-white'
-                    : 'bg-yellow-500 hover:bg-yellow-600 text-white'
-                }`}
-              >
-                ✍️ Sign to Verify Wallet
-              </button>
-            ) : (
-              <button
-                onClick={pay}
-                className={`w-full py-3 rounded-2xl text-base sm:text-lg font-semibold transition-colors duration-300 ${
-                  isDark
-                    ? 'bg-blue-500 hover:bg-blue-600 text-white'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                }`}
-              >
-                Pay Now
-              </button>
-            )}
-            {status && (
-              <p className={`text-center font-medium text-xs sm:text-base mt-2 transition-colors duration-300 ${
-                status.includes('❌') || status.includes('Failed') || status.includes('rejected')
-                  ? 'text-red-500'
-                  : status.includes('✅') || status.includes('Successful')
-                    ? 'text-green-500'
-                    : isDark ? 'text-gray-300' : 'text-gray-700'
-              }`}>
-                {status}
-              </p>
-            )}
-            <button
-              onClick={goToCreate}
-              className={`w-full border py-2 sm:py-3 rounded-2xl text-sm sm:text-base font-semibold transition-all duration-300 ${
-                isDark
-                  ? 'border-gray-700 hover:bg-gray-800 text-gray-300'
-                  : 'border-gray-300 hover:bg-gray-50 text-gray-700'
-              }`}
-            >
-              + Create New PayLink
-            </button>
+
+                {/* Message (optional) */}
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    Message (optional)
+                  </label>
+                  <textarea
+                    placeholder="Add a message..."
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    rows={3}
+                    className={`w-full px-4 py-3 rounded-xl border focus:outline-none text-sm resize-none ${
+                      isDark
+                        ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+                    }`}
+                  />
+                </div>
+
+                {/* Wallet Connection */}
+                {!account ? (
+                  <button
+                    onClick={connectWallet}
+                    className="w-full py-3 rounded-xl font-semibold bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-lg hover:scale-105 transition-all"
+                  >
+                    🦊 Connect Wallet
+                  </button>
+                ) : (
+                  <>
+                    <div className={`flex items-center justify-between px-4 py-2 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                      <p className={`font-mono text-xs ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                        {formatAddress(account)}
+                      </p>
+                      <button
+                        onClick={() => setAccount('')}
+                        className="text-red-500 hover:text-red-600 text-xs font-medium"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                    <button
+                      onClick={sendPayment}
+                      disabled={paying || (!link.amount && !amount) || !payerName.trim()}
+                      className="w-full py-3 rounded-xl font-semibold bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg hover:scale-105 transition-all disabled:opacity-50 disabled:hover:scale-100"
+                    >
+                      {paying 
+                        ? '⏳ Processing...' 
+                        : `💸 Pay ${link.amount ? '$' + parseFloat(link.amount).toFixed(2) : amount ? '$' + parseFloat(amount).toFixed(2) : ''} USDC`
+                      }
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <div className={`mt-6 text-center text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+            <p>
+              Powered by <span className="font-semibold text-blue-500">PayOnBase24</span> • Built on Base Network
+            </p>
           </div>
         </div>
       </div>

@@ -325,6 +325,7 @@ export default function SidebarLayout({ children }) {
               <div className={`ml-6 mt-2 space-y-1 pl-4 border-l-2 ${isDark ? 'border-gray-700' : 'border-blue-200'}`}>
                 <button
                   onClick={() => navigate('/create')}
+                   data-tour="create"
                   className={`w-full text-left px-4 py-2 rounded-xl text-sm transition-all ${
                     location.pathname === '/create'
                       ? isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'
@@ -335,6 +336,7 @@ export default function SidebarLayout({ children }) {
                 </button>
                 <button
                   onClick={() => navigate('/dashboard')}
+                  data-tour="dashboard"
                   className={`w-full text-left px-4 py-2 rounded-xl text-sm transition-all ${
                     location.pathname === '/dashboard'
                       ? isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-50 text-blue-600'
@@ -350,6 +352,7 @@ export default function SidebarLayout({ children }) {
           {/* Donation */}
           <button
             onClick={() => navigate('/donation')}
+             data-tour="donation" 
             className={`w-full text-left px-4 py-3 rounded-2xl transition-all flex items-center gap-3 ${
               isActive('/donation')
                 ? isDark ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-blue-50 text-blue-600 border border-blue-200'
@@ -368,6 +371,7 @@ export default function SidebarLayout({ children }) {
           {/* TravelFund */}
           <button
             onClick={() => navigate('/travel')}
+             data-tour="travel"
             className={`w-full text-left px-4 py-3 rounded-2xl transition-all flex items-center gap-3 ${
               isActive('/travel')
                 ? isDark ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-blue-50 text-blue-600 border border-blue-200'
@@ -387,6 +391,7 @@ export default function SidebarLayout({ children }) {
         <div className={`p-4 border-t space-y-2 ${isDark ? 'border-gray-800' : 'border-blue-100'}`}>
           <button
             onClick={() => navigate('/settings')}
+             data-tour="settings" 
             className={`w-full text-left px-4 py-3 rounded-2xl transition-colors flex items-center gap-3 ${
               isActive('/settings')
                 ? isDark ? 'bg-gray-800 text-white' : 'bg-blue-50 text-gray-900'

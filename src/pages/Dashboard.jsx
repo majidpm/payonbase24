@@ -1,206 +1,236 @@
-import { useEffect, useState, useMemo } from 'react'
-import { supabase } from '../lib/supabase'
-import QRCode from 'react-qr-code'
-import { useNavigate } from 'react-router-dom'
-import { useTheme } from '../contexts/ThemeContext'
-import { handleAppError, showSuccess } from '../lib/errorHandler'
-import { StatsSkeleton, CardSkeleton, ListSkeleton } from '../components/Skeleton'
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
+import { useTheme } from '../contexts/ThemeContext';
+import { handleAppError, showSuccess } from '../lib/errorHandler';
+import { StatsSkeleton, CardSkeleton, ListSkeleton } from '../components/Skeleton';
 
 export default function Dashboard() {
-  const { isDark } = useTheme()
-  const [payments, setPayments] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [copiedId, setCopiedId] = useState(null)
-  const [deletingId, setDeletingId] = useState(null)
-  const [showQR, setShowQR] = useState(null)
-  const navigate = useNavigate()
-
-  // Filters
-  const [dateFilter, setDateFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [searchQuery, setSearchQuery] = useState('')
+  const { isDark } = useTheme();
+  const navigate = useNavigate();
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [payments, setPayments] = useState([]);
+  const [stats, setStats] = useState({
+    total: 0,
+    active: 0,
+    paid: 0,
+    expired: 0,
+    totalAmount: 0,
+    collectedAmount: 0
+  });
+  const [filter, setFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('date');
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    loadPayments()
-  }, [])
+    loadUser();
+  }, []);
+
+  useEffect(() => {
+    if (userId) loadPayments();
+  }, [userId]);
+
+  async function loadUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) setUserId(user.id);
+  }
 
   async function loadPayments() {
+    setLoading(true);
     try {
-      setLoading(true)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        navigate('/auth')
-        return
-      }
       const { data, error } = await supabase
         .from('payment')
         .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-      
-      if (error) throw error
-      setPayments(data || [])
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // چک کردن expiry برای همه لینک‌ها
+      const updatedPayments = await Promise.all(
+        (data || []).map(async (p) => {
+          if (p.status === 'active' && p.expires_at && new Date(p.expires_at) < new Date()) {
+            // آپدیت status به expired
+            await supabase
+              .from('payment')
+              .update({ status: 'expired' })
+              .eq('id', p.id);
+            return { ...p, status: 'expired' };
+          }
+          return p;
+        })
+      );
+
+      setPayments(updatedPayments);
+      calculateStats(updatedPayments);
     } catch (err) {
-      handleAppError(err, 'loadPayments')
+      handleAppError(err, 'loadPayments');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
-  // Optimistic delete
-  async function cancelPayment(id) {
-    if (!window.confirm('Are you sure you want to cancel this payment link?')) return
-    
-    // Optimistic update
-    const originalPayments = [...payments]
-    setPayments(payments.filter(p => p.id !== id))
-    setDeletingId(id)
-    
+  function calculateStats(paymentsList) {
+    const now = new Date();
+    const statsData = {
+      total: paymentsList.length,
+      active: paymentsList.filter(p => p.status === 'active').length,
+      paid: paymentsList.filter(p => p.status === 'paid').length,
+      expired: paymentsList.filter(p => p.status === 'expired').length,
+      totalAmount: paymentsList.reduce((sum, p) => sum + (p.amount ? parseFloat(p.amount) : 0), 0),
+      collectedAmount: paymentsList
+        .filter(p => p.status === 'paid')
+        .reduce((sum, p) => sum + (p.amount ? parseFloat(p.amount) : 0), 0)
+    };
+    setStats(statsData);
+  }
+
+  async function cancelLink(id) {
+    if (!window.confirm('Cancel this payment link?')) return;
+
+    const original = [...payments];
+    setPayments(payments.map(p => p.id === id ? { ...p, status: 'cancelled' } : p));
+
+    try {
+      const { error } = await supabase
+        .from('payment')
+        .update({ status: 'cancelled' })
+        .eq('id', id);
+
+      if (error) throw error;
+      showSuccess('Link cancelled');
+      await loadPayments();
+    } catch (err) {
+      handleAppError(err, 'cancelLink');
+      setPayments(original);
+    }
+  }
+
+  async function deleteLink(id) {
+    if (!window.confirm('Delete this payment link permanently?')) return;
+
+    const original = [...payments];
+    setPayments(payments.filter(p => p.id !== id));
+
     try {
       const { error } = await supabase
         .from('payment')
         .delete()
-        .eq('id', id)
-      
-      if (error) throw error
-      showSuccess('Payment link cancelled')
+        .eq('id', id);
+
+      if (error) throw error;
+      showSuccess('Link deleted');
+      await loadPayments();
     } catch (err) {
-      handleAppError(err, 'cancelPayment')
-      // Rollback
-      setPayments(originalPayments)
-    } finally {
-      setDeletingId(null)
+      handleAppError(err, 'deleteLink');
+      setPayments(original);
     }
   }
 
-  async function copyLink(slug, id) {
-    try {
-      const link = `${window.location.origin}/pay/${slug}`
-      await navigator.clipboard.writeText(link)
-      setCopiedId(id)
-      showSuccess('Link copied to clipboard!')
-      setTimeout(() => setCopiedId(null), 2000)
-    } catch (err) {
-      handleAppError(err, 'copyLink')
-    }
+  function copyLink(slug) {
+    const url = `${window.location.origin}/pay/${slug}`;
+    navigator.clipboard.writeText(url);
+    showSuccess('Link copied!');
   }
 
-  function viewOnBasescan(txHash) {
-    if (txHash) {
-      window.open(`https://basescan.org/tx/${txHash}`, '_blank')
-    }
+  function getStatusBadge(payment) {
+    const isExpired = payment.status === 'active' && payment.expires_at && new Date(payment.expires_at) < new Date();
+    const status = isExpired ? 'expired' : payment.status;
+
+    const styles = {
+      active: isDark ? 'bg-green-900/30 text-green-400 border-green-800' : 'bg-green-100 text-green-700 border-green-200',
+      paid: isDark ? 'bg-blue-900/30 text-blue-400 border-blue-800' : 'bg-blue-100 text-blue-700 border-blue-200',
+      expired: isDark ? 'bg-gray-800 text-gray-400 border-gray-700' : 'bg-gray-100 text-gray-600 border-gray-200',
+      cancelled: isDark ? 'bg-red-900/30 text-red-400 border-red-800' : 'bg-red-100 text-red-700 border-red-200'
+    };
+
+    const labels = {
+      active: '✅ Active',
+      paid: '💰 Paid',
+      expired: '⌛ Expired',
+      cancelled: '❌ Cancelled'
+    };
+
+    return (
+      <span className={`px-2 py-1 rounded-full text-xs font-medium border ${styles[status]}`}>
+        {labels[status]}
+      </span>
+    );
   }
-
-  const filteredPayments = useMemo(() => {
-    let filtered = [...payments]
-    const now = new Date()
-
-    if (dateFilter !== 'all') {
-      filtered = filtered.filter(p => {
-        const created = new Date(p.created_at)
-        if (dateFilter === 'today') {
-          return created.toDateString() === now.toDateString()
-        }
-        if (dateFilter === 'week') {
-          const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-          return created >= weekAgo
-        }
-        if (dateFilter === 'month') {
-          return created.getMonth() === now.getMonth() && created.getFullYear() === now.getFullYear()
-        }
-        if (dateFilter === 'year') {
-          return created.getFullYear() === now.getFullYear()
-        }
-        return true
-      })
-    }
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(p => {
-        if (statusFilter === 'paid') return p.paid
-        if (statusFilter === 'pending') return !p.paid
-        return true
-      })
-    }
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase()
-      filtered = filtered.filter(p => 
-        p.slug.toLowerCase().includes(query) ||
-        p.amount.toString().includes(query) ||
-        (p.tx_hash && p.tx_hash.toLowerCase().includes(query))
-      )
-    }
-
-    return filtered
-  }, [payments, dateFilter, statusFilter, searchQuery])
-
-  const stats = useMemo(() => {
-    const total = payments.length
-    const paid = payments.filter(p => p.paid).length
-    const pending = total - paid
-    const totalAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount || 0), 0)
-    const paidAmount = payments.filter(p => p.paid).reduce((sum, p) => sum + parseFloat(p.amount || 0), 0)
-    const todayCount = payments.filter(p => {
-      const created = new Date(p.created_at)
-      return created.toDateString() === new Date().toDateString()
-    }).length
-
-    return { total, paid, pending, totalAmount, paidAmount, todayCount }
-  }, [payments])
 
   function formatDate(dateString) {
-    const date = new Date(dateString)
+    const date = new Date(dateString);
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+      year: 'numeric'
+    });
   }
 
-  function formatAmount(amount) {
-    const num = parseFloat(amount)
-    if (isNaN(num)) return '0.00'
-    if (num >= 1) return num.toFixed(2)
-    if (num >= 0.01) return num.toFixed(4)
-    return num.toFixed(6)
+  function getFilteredPayments() {
+    let filtered = [...payments];
+
+    // Filter by status
+    if (filter !== 'all') {
+      filtered = filtered.filter(p => {
+        if (filter === 'active') return p.status === 'active';
+        if (filter === 'paid') return p.status === 'paid';
+        if (filter === 'expired') return p.status === 'expired' || (p.status === 'active' && p.expires_at && new Date(p.expires_at) < new Date());
+        if (filter === 'cancelled') return p.status === 'cancelled';
+        return true;
+      });
+    }
+
+    // Search
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(p => 
+        p.title.toLowerCase().includes(query) ||
+        (p.description && p.description.toLowerCase().includes(query)) ||
+        (p.payer_name && p.payer_name.toLowerCase().includes(query))
+      );
+    }
+
+    // Sort
+    if (sortBy === 'amount') {
+      filtered.sort((a, b) => (b.amount || 0) - (a.amount || 0));
+    } else if (sortBy === 'date') {
+      filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    } else if (sortBy === 'status') {
+      const statusOrder = { active: 0, paid: 1, expired: 2, cancelled: 3 };
+      filtered.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
+    }
+
+    return filtered;
   }
 
-  const dateFilters = [
-    { key: 'today', label: 'Today', icon: '📅' },
-    { key: 'week', label: 'Week', icon: '📆' },
-    { key: 'month', label: 'Month', icon: '🗓️' },
-    { key: 'year', label: 'Year', icon: '' },
-    { key: 'all', label: 'All', icon: '🌐' }
-  ]
+  const filteredPayments = getFilteredPayments();
 
-  const statusFilters = [
-    { key: 'all', label: 'All', icon: '📋' },
-    { key: 'pending', label: 'Pending', icon: '⏳' },
-    { key: 'paid', label: 'Paid', icon: '✅' }
-  ]
+  const inputClass = `w-full px-4 py-2.5 rounded-xl border focus:outline-none text-sm transition-colors ${
+    isDark
+      ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+      : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+  }`;
 
-  // Loading state with skeleton
   if (loading) {
     return (
       <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
         <div className="p-4 sm:p-6 md:p-8">
           <div className="max-w-7xl mx-auto space-y-6">
             <div className="flex justify-between items-center">
-              <div className={`h-8 rounded w-48 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
-              <div className={`h-10 rounded-xl w-32 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
+              <div className={`h-8 rounded w-64 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
             </div>
             <StatsSkeleton />
             <div className={`rounded-2xl p-4 ${isDark ? 'bg-gray-900' : 'bg-white'}`}>
               <div className={`h-10 rounded-xl mb-4 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
               <div className={`h-10 rounded-xl animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
             </div>
-            <ListSkeleton count={3} />
+            <ListSkeleton count={5} />
           </div>
         </div>
       </div>
-    )
+    );
   }
 
   return (
@@ -208,374 +238,285 @@ export default function Dashboard() {
       <div className="p-4 sm:p-6 md:p-8">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-5 sm:mb-6">
-            <div className="min-w-0 flex-1">
-              <h1 className={`text-xl sm:text-2xl md:text-4xl font-bold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                📊 Dashboard
-              </h1>
-              <p className={`text-xs sm:text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                {stats.todayCount > 0 ? `${stats.todayCount} new link${stats.todayCount > 1 ? 's' : ''} today` : 'Manage your payment links'}
-              </p>
+          <div className="mb-6 sm:mb-8">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-2">
+              <div>
+                <h1 className={`text-2xl sm:text-4xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  💳 Payment Links Dashboard
+                </h1>
+                <p className={`text-sm sm:text-base mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Manage and track your payment links
+                </p>
+              </div>
+              <button
+                onClick={() => navigate('/create')}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold text-sm transition-all hover:scale-105"
+              >
+                + New PayLink
+              </button>
             </div>
-            <button
-              onClick={() => navigate('/create')}
-              className="w-full sm:w-auto bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl font-semibold text-xs sm:text-sm transition-all hover:scale-105 flex items-center justify-center gap-2 flex-shrink-0"
-            >
-              <span className="text-base">+</span> New PayLink
-            </button>
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:gap-4 mb-5 sm:mb-6">
-            {/* Total Links */}
-            <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border transition-all ${
-              isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-            }`}>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className={`rounded-2xl p-4 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-xl ${
-                  isDark ? 'bg-blue-500/20' : 'bg-blue-100'
-                }`}>
-                  🔗
-                </div>
-                <span className={`text-[9px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full ${
-                  isDark ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-100 text-blue-700'
-                }`}>
-                  Total
-                </span>
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Total Links</span>
+                <span className="text-2xl">📊</span>
               </div>
-              <p className={`text-xl sm:text-2xl md:text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {stats.total}
-              </p>
-              <p className={`text-[9px] sm:text-xs mt-0.5 sm:mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                Payment Links
-              </p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>{stats.total}</p>
             </div>
 
-            {/* Paid */}
-            <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border transition-all ${
-              isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-            }`}>
+            <div className={`rounded-2xl p-4 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-xl ${
-                  isDark ? 'bg-green-500/20' : 'bg-green-100'
-                }`}>
-                  ✅
-                </div>
-                <span className={`text-[9px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full ${
-                  isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700'
-                }`}>
-                  Completed
-                </span>
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Active</span>
+                <span className="text-2xl">✅</span>
               </div>
-              <p className={`text-xl sm:text-2xl md:text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {stats.paid}
-              </p>
-              <p className={`text-[9px] sm:text-xs mt-0.5 sm:mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                Paid Links
-              </p>
+              <p className="text-2xl font-bold text-green-500">{stats.active}</p>
             </div>
 
-            {/* Pending */}
-            <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border transition-all ${
-              isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-            }`}>
+            <div className={`rounded-2xl p-4 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-xl ${
-                  isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
-                }`}>
-                  ⏳
-                </div>
-                <span className={`text-[9px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full ${
-                  isDark ? 'bg-yellow-900/30 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
-                }`}>
-                  Active
-                </span>
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Paid</span>
+                <span className="text-2xl">💰</span>
               </div>
-              <p className={`text-xl sm:text-2xl md:text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {stats.pending}
-              </p>
-              <p className={`text-[9px] sm:text-xs mt-0.5 sm:mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                Pending Links
-              </p>
+              <p className="text-2xl font-bold text-blue-500">{stats.paid}</p>
             </div>
 
-            {/* Total Amount */}
-            <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border transition-all ${
-              isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-            }`}>
+            <div className={`rounded-2xl p-4 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className={`w-7 h-7 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl flex items-center justify-center text-base sm:text-xl ${
-                  isDark ? 'bg-purple-500/20' : 'bg-purple-100'
-                }`}>
-                  💰
-                </div>
-                <span className={`text-[9px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full ${
-                  isDark ? 'bg-purple-900/30 text-purple-400' : 'bg-purple-100 text-purple-700'
-                }`}>
-                  Received
-                </span>
+                <span className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Collected</span>
+                <span className="text-2xl">💵</span>
               </div>
-              <p className={`text-xl sm:text-2xl md:text-3xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                ${formatAmount(stats.paidAmount)}
-              </p>
-              <p className={`text-[9px] sm:text-xs mt-0.5 sm:mt-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                USDC Collected
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                ${stats.collectedAmount.toFixed(2)}
               </p>
             </div>
           </div>
 
-          {/* Filters Section */}
-          <div className={`rounded-xl sm:rounded-2xl p-3 sm:p-4 border mb-4 sm:mb-5 ${
-            isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-          }`}>
-            {/* Search */}
-            <div className="mb-3">
-              <div className="relative">
-                <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${
-                  isDark ? 'text-gray-500' : 'text-gray-400'
-                }`}>
-                  🔍
-                </span>
-                <input
-                  type="text"
-                  placeholder="Search by slug, amount, or tx hash..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className={`w-full pl-9 pr-3 py-2 sm:py-2.5 rounded-lg sm:rounded-xl border focus:outline-none text-xs sm:text-sm transition-colors ${
-                    isDark
-                      ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
-                      : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                  }`}
-                />
-              </div>
-            </div>
+          {/* Filters & Search */}
+          <div className={`rounded-2xl p-4 sm:p-6 border mb-4 sm:mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+            <div className="flex flex-col gap-4">
+              <input
+                type="text"
+                placeholder="Search by title, description, or payer name..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={inputClass}
+              />
 
-            {/* Date Filters */}
-            <div className="mb-3">
-              <p className={`text-[9px] sm:text-xs font-semibold mb-1.5 sm:mb-2 uppercase tracking-wide ${
-                isDark ? 'text-gray-500' : 'text-gray-400'
-              }`}>
-                Date Range
-              </p>
-              <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1">
-                {dateFilters.map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => setDateFilter(f.key)}
-                    className={`px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg font-medium text-[10px] sm:text-xs transition-all flex-shrink-0 flex items-center gap-1 ${
-                      dateFilter === f.key
-                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                        : isDark
-                          ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
-                          : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                    }`}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex-1">
+                  <label className={`block text-xs font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Filter by Status
+                  </label>
+                  <select
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    className={inputClass}
                   >
-                    <span className="text-xs">{f.icon}</span>
-                    <span>{f.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+                    <option value="all">All Links</option>
+                    <option value="active">Active</option>
+                    <option value="paid">Paid</option>
+                    <option value="expired">Expired</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
 
-            {/* Status Filters */}
-            <div>
-              <p className={`text-[9px] sm:text-xs font-semibold mb-1.5 sm:mb-2 uppercase tracking-wide ${
-                isDark ? 'text-gray-500' : 'text-gray-400'
-              }`}>
-                Status
-              </p>
-              <div className="grid grid-cols-3 gap-1.5">
-                {statusFilters.map((f) => (
-                  <button
-                    key={f.key}
-                    onClick={() => setStatusFilter(f.key)}
-                    className={`px-2 py-1.5 sm:py-2 rounded-lg font-medium text-[10px] sm:text-xs transition-all flex items-center justify-center gap-1 ${
-                      statusFilter === f.key
-                        ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30'
-                        : isDark
-                          ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
-                          : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                    }`}
+                <div className="flex-1">
+                  <label className={`block text-xs font-medium mb-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Sort by
+                  </label>
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className={inputClass}
                   >
-                    <span className="text-xs">{f.icon}</span>
-                    <span>{f.label}</span>
-                  </button>
-                ))}
+                    <option value="date">Date Created</option>
+                    <option value="amount">Amount</option>
+                    <option value="status">Status</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Results Count */}
-          <div className="flex justify-between items-center mb-3">
-            <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              Showing <span className="font-bold">{filteredPayments.length}</span> of{' '}
-              <span className="font-bold">{payments.length}</span> links
-            </p>
-            {(dateFilter !== 'all' || statusFilter !== 'all' || searchQuery) && (
-              <button
-                onClick={() => {
-                  setDateFilter('all')
-                  setStatusFilter('all')
-                  setSearchQuery('')
-                }}
-                className={`text-[10px] sm:text-xs font-medium ${
-                  isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'
-                }`}
-              >
-                Clear filters
-              </button>
-            )}
-          </div>
-
-          {/* Payments Grid */}
+          {/* Payments List */}
           {filteredPayments.length === 0 ? (
-            <div className={`rounded-xl sm:rounded-2xl p-6 sm:p-8 border text-center ${
-              isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'
-            }`}>
-              <div className="text-4xl sm:text-5xl mb-3">
-                {payments.length === 0 ? '🎯' : '🔍'}
-              </div>
-              <h3 className={`text-base sm:text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <div className={`rounded-2xl p-8 sm:p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
+              <div className="text-5xl sm:text-6xl mb-4">🎯</div>
+              <h3 className={`text-lg sm:text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {payments.length === 0 ? 'No Payment Links Yet' : 'No Results Found'}
               </h3>
-              <p className={`text-xs sm:text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              <p className={`text-sm sm:text-base mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                 {payments.length === 0 
-                  ? 'Create your first payment link to get started!'
+                  ? 'Create your first payment link to start receiving USDC!'
                   : 'Try adjusting your filters or search query.'}
               </p>
               {payments.length === 0 && (
                 <button
                   onClick={() => navigate('/create')}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold text-xs sm:text-sm transition-all hover:scale-105"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-semibold text-sm transition-all hover:scale-105"
                 >
-                  Create Your First PayLink
+                  + Create Your First PayLink
                 </button>
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-              {filteredPayments.map((p) => (
-                <div
-                  key={p.id}
-                  className={`rounded-xl sm:rounded-2xl border transition-all ${
-                    isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100 shadow-sm'
-                  }`}
-                >
-                  {/* Card Header */}
-                  <div className={`p-3 sm:p-4 border-b ${isDark ? 'border-gray-800' : 'border-gray-100'}`}>
-                    <div className="flex justify-between items-start gap-2 mb-2">
+            <div className="space-y-3 sm:space-y-4">
+              {filteredPayments.map((p) => {
+                const isExpired = p.status === 'active' && p.expires_at && new Date(p.expires_at) < new Date();
+                const displayStatus = isExpired ? 'expired' : p.status;
+                const linkUrl = `${window.location.origin}/pay/${p.slug}`;
+
+                return (
+                  <div
+                    key={p.id}
+                    className={`rounded-2xl p-4 sm:p-6 border transition-all ${
+                      isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row justify-between gap-3 mb-4">
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className={`inline-block px-2 py-0.5 rounded text-[9px] sm:text-xs font-bold ${
-                            p.paid
-                              ? isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700'
-                              : isDark ? 'bg-yellow-900/30 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
+                        <div className="flex items-start gap-3 mb-2">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0 ${
+                            displayStatus === 'paid' 
+                              ? isDark ? 'bg-blue-500/20' : 'bg-blue-100'
+                              : displayStatus === 'cancelled'
+                              ? isDark ? 'bg-red-500/20' : 'bg-red-100'
+                              : displayStatus === 'expired'
+                              ? isDark ? 'bg-gray-800' : 'bg-gray-100'
+                              : isDark ? 'bg-green-500/20' : 'bg-green-100'
                           }`}>
-                            {p.paid ? '✅ Paid' : ' Pending'}
-                          </span>
+                            {displayStatus === 'paid' ? '💰' : displayStatus === 'cancelled' ? '❌' : displayStatus === 'expired' ? '⌛' : '✅'}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className={`text-base sm:text-lg font-bold truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              {p.title}
+                            </h3>
+                            {p.description && (
+                              <p className={`text-xs sm:text-sm line-clamp-2 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                                {p.description}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <p className={`font-mono text-[10px] sm:text-xs truncate ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                          /{p.slug}
-                        </p>
                       </div>
-                      <div className="text-right flex-shrink-0">
-                        <p className={`text-lg sm:text-xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                          {formatAmount(p.amount)}
+
+                      <div className="flex sm:flex-col items-start sm:items-end gap-2">
+                        {getStatusBadge(p)}
+                        <p className={`text-xl sm:text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                          ${p.amount ? parseFloat(p.amount).toFixed(2) : 'Any'}
                         </p>
-                        <p className={`text-[9px] sm:text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                          USDC
+                        <p className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                          {p.amount ? 'USDC (Fixed)' : 'USDC (Any)'}
                         </p>
                       </div>
                     </div>
-                    <p className={`text-[9px] sm:text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                      {formatDate(p.created_at)}
-                    </p>
-                  </div>
 
-                  {/* QR Code (Toggle) */}
-                  {showQR === p.id && (
-                    <div className={`p-3 border-b flex justify-center ${isDark ? 'border-gray-800 bg-gray-800/50' : 'border-gray-100 bg-gray-50'}`}>
-                      <QRCode
-                        size={100}
-                        value={`${window.location.origin}/pay/${p.slug}`}
-                        bgColor={isDark ? '#1f2937' : '#ffffff'}
-                        fgColor={isDark ? '#ffffff' : '#1e293b'}
-                      />
-                    </div>
-                  )}
-
-                  {/* Card Actions */}
-                  <div className={`p-3 ${!p.paid && 'border-t ' + (isDark ? 'border-gray-800' : 'border-gray-100')}`}>
-                    {!p.paid ? (
-                      <div className="grid grid-cols-2 gap-2">
+                    {/* Link Box */}
+                    <div className={`p-3 rounded-xl mb-3 ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                      <p className={`text-xs mb-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>🔗 Payment Link</p>
+                      <div className="flex gap-2">
+                        <div className={`flex-1 px-3 py-2 rounded-lg font-mono text-xs truncate ${
+                          isDark ? 'bg-gray-700 text-gray-300' : 'bg-white text-gray-700 border border-gray-200'
+                        }`}>
+                          {linkUrl}
+                        </div>
                         <button
-                          onClick={() => copyLink(p.slug, p.id)}
-                          className={`py-2 rounded-lg font-medium text-xs transition-all ${
-                            copiedId === p.id
-                              ? 'bg-green-500 text-white'
-                              : isDark
-                                ? 'bg-gray-800 hover:bg-gray-700 text-gray-300'
-                                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                          onClick={() => copyLink(p.slug)}
+                          className={`px-4 py-2 rounded-lg font-medium text-sm transition ${
+                            isDark ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-blue-600 text-white hover:bg-blue-700'
                           }`}
                         >
-                          {copiedId === p.id ? '✅ Copied!' : ' Copy'}
-                        </button>
-                        <button
-                          onClick={() => setShowQR(showQR === p.id ? null : p.id)}
-                          className={`py-2 rounded-lg font-medium text-xs transition-all ${
-                            isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-                          }`}
-                        >
-                          {showQR === p.id ? '❌ Hide' : '📱 QR'}
-                        </button>
-                        <button
-                          onClick={() => cancelPayment(p.id)}
-                          disabled={deletingId === p.id}
-                          className={`col-span-2 py-2 rounded-lg font-medium text-xs transition-all disabled:opacity-50 ${
-                            isDark
-                              ? 'bg-red-900/30 hover:bg-red-900/50 text-red-400'
-                              : 'bg-red-50 hover:bg-red-100 text-red-700'
-                          }`}
-                        >
-                          {deletingId === p.id ? '⏳ Cancelling...' : '️ Cancel Link'}
+                          📋
                         </button>
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {p.tx_hash && (
+                    </div>
+
+                    {/* Meta Info */}
+                    <div className="flex flex-wrap gap-3 sm:gap-4 text-xs mb-3">
+                      <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                        📅 Created: {formatDate(p.created_at)}
+                      </span>
+                      {p.expires_at && (
+                        <span className={isExpired ? 'text-red-500 font-medium' : isDark ? 'text-gray-400' : 'text-gray-600'}>
+                          ⏰ Expires: {formatDate(p.expires_at)}
+                        </span>
+                      )}
+                      {p.payer_name && displayStatus === 'paid' && (
+                        <span className="text-green-500 font-medium">
+                          💳 Paid by: {p.payer_name}
+                        </span>
+                      )}
+                      {p.recipient_email && (
+                        <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>
+                          📧 Sent to: {p.recipient_email}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-200 dark:border-gray-800">
+                      {displayStatus === 'active' && (
+                        <>
                           <button
-                            onClick={() => viewOnBasescan(p.tx_hash)}
-                            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-2"
+                            onClick={() => copyLink(p.slug)}
+                            className={`px-4 py-2 rounded-lg text-xs font-medium transition ${
+                              isDark ? 'bg-blue-900/30 text-blue-400 hover:bg-blue-900/50' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                            }`}
                           >
-                            🔗 View on Basescan
+                            🔗 Copy Link
                           </button>
-                        )}
-                        <button
-                          onClick={() => setShowQR(showQR === p.id ? null : p.id)}
-                          className={`w-full py-2 rounded-lg font-medium text-xs transition-all ${
-                            isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                          <button
+                            onClick={() => cancelLink(p.id)}
+                            className={`px-4 py-2 rounded-lg text-xs font-medium transition ${
+                              isDark ? 'bg-yellow-900/30 text-yellow-400 hover:bg-yellow-900/50' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                            }`}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
+                      {displayStatus === 'paid' && p.tx_hash && (
+                        <a
+                          href={`https://basescan.org/tx/${p.tx_hash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`px-4 py-2 rounded-lg text-xs font-medium transition ${
+                            isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                           }`}
                         >
-                          {showQR === p.id ? '❌ Hide QR' : '📱 Show QR Code'}
-                        </button>
-                      </div>
-                    )}
+                          🔗 View on Basescan
+                        </a>
+                      )}
+                      <button
+                        onClick={() => deleteLink(p.id)}
+                        className={`px-4 py-2 rounded-lg text-xs font-medium transition ${
+                          isDark ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-700 hover:bg-red-100'
+                        }`}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
-          {/* Footer Summary */}
+          {/* Summary */}
           {filteredPayments.length > 0 && (
-            <div className={`mt-4 p-3 rounded-xl text-center ${isDark ? 'bg-gray-900/50' : 'bg-gray-50'}`}>
-              <p className={`text-[10px] sm:text-xs ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                💡 Tip: Click on <span className="font-bold">QR</span> to view the QR code for any link
+            <div className={`mt-4 sm:mt-6 p-3 sm:p-4 rounded-xl sm:rounded-2xl text-center ${isDark ? 'bg-gray-900/50' : 'bg-gray-50'}`}>
+              <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Showing <span className="font-bold">{filteredPayments.length}</span> of{' '}
+                <span className="font-bold">{payments.length}</span> payment links
+                {filter !== 'all' && ` (filtered by ${filter})`}
               </p>
             </div>
           )}
         </div>
       </div>
     </div>
-  )
+  );
 }

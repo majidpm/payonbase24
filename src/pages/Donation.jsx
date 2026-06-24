@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useTheme } from '../contexts/ThemeContext'
 import { handleAppError, showSuccess } from '../lib/errorHandler'
 import { StatsSkeleton, CardSkeleton, ListSkeleton } from '../components/Skeleton'
+import EmptyState from '../components/EmptyState'
 
 export default function Donation() {
   const { isDark } = useTheme()
@@ -488,19 +489,22 @@ async function deleteDonation(id) {
         </div>
 
         {/* Donations List */}
-        {filteredDonations.length === 0 ? (
-          <div className={`rounded-2xl sm:rounded-3xl p-8 sm:p-12 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-            <div className="text-4xl sm:text-6xl mb-3 sm:mb-4">🎁</div>
-            <h3 className={`text-lg sm:text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              {donations.length === 0 ? 'No Donations Yet' : 'No Results Found'}
-            </h3>
-            <p className={`text-xs sm:text-base ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              {donations.length === 0 
-                ? 'Share your profile link to start receiving donations!'
-                : 'Try adjusting your filters or search query.'}
-            </p>
-          </div>
-        ) : (
+       {filteredDonations.length === 0 ? (
+  <EmptyState
+    illustration={donations.length === 0 ? 'donation' : 'search'}
+    title={donations.length === 0 ? 'No Donations Yet' : 'No Results Found'}
+    description={
+      donations.length === 0 
+        ? 'Share your public profile link with supporters to start receiving donations!'
+        : 'Try adjusting your filters or search query to find what you\'re looking for.'
+    }
+    actionText={donations.length === 0 && publicProfileUrl ? '📋 Copy Your Profile Link' : undefined}
+    onAction={donations.length === 0 && publicProfileUrl ? () => {
+      navigator.clipboard.writeText(publicProfileUrl)
+      showSuccess('Profile link copied!')
+    } : undefined}
+  />
+) : (
           <div className="space-y-3 sm:space-y-4">
             {filteredDonations.map((donation) => (
               <div

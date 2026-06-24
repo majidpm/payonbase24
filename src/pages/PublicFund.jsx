@@ -3,6 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { supabase } from '../lib/supabase';
 import { useTheme } from '../contexts/ThemeContext';
+import { handleAppError, showSuccess } from '../lib/errorHandler';
+import { celebrateDonation } from '../lib/celebrations';
+import { ensureWalletUnlocked, checkUSDCBalance, ensureBaseNetwork } from '../lib/walletHelper';
 
 export default function PublicFund() {
   const { isDark } = useTheme();
@@ -15,7 +18,6 @@ export default function PublicFund() {
   const [donateAmount, setDonateAmount] = useState('');
   const [donateName, setDonateName] = useState('');
   const [donating, setDonating] = useState(false);
-  const [status, setStatus] = useState('');
 
   const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
@@ -41,48 +43,26 @@ export default function PublicFund() {
         await loadContributions(fundData.id);
       }
     } catch (err) {
-      console.error('Error loading fund:', err);
+      handleAppError(err, 'loadFund');
     } finally {
       setLoading(false);
     }
   }
 
   async function loadContributions(fundId) {
-  try {
-    const { data, error } = await supabase
-      .from('travel_contributions')
-      .select('*')
-      .eq('fund_id', fundId)
-      .order('created_at', { ascending: false });
-    
-    console.log('=== DEBUG Contributions ===');
-    console.log('Raw data:', data);
-    console.log('Error:', error);
-    
-    if (data) {
-      data.forEach((c, index) => {
-        console.log(`Contribution ${index}:`, {
-          id: c.id,
-          amount: c.amount,
-          type: typeof c.amount,
-          parsed: parseFloat(c.amount)
-        });
-      });
+    try {
+      const { data, error } = await supabase
+        .from('travel_contributions')
+        .select('*')
+        .eq('fund_id', fundId)
+        .order('created_at', { ascending: false });
       
-      const total = data.reduce((sum, c) => {
-        const amt = parseFloat(c.amount);
-        console.log(`Adding ${amt} to sum ${sum}`);
-        return sum + (isNaN(amt) ? 0 : amt);
-      }, 0);
-      
-      console.log('Total calculated:', total);
+      if (error) throw error;
+      setContributions(data || []);
+    } catch (err) {
+      handleAppError(err, 'loadContributions');
     }
-    
-    setContributions(data || []);
-  } catch (err) {
-    console.error('Error loading contributions:', err);
   }
-}
 
   async function checkWallet() {
     if (typeof window.ethereum !== 'undefined') {
@@ -95,84 +75,127 @@ export default function PublicFund() {
     }
   }
 
-  async function connectWallet() {
-    if (typeof window.ethereum === 'undefined') {
-      setStatus('❌ Please install MetaMask');
-      return;
+async function connectWallet() {
+  if (typeof window.ethereum === 'undefined') {
+    handleAppError({ message: 'Please install MetaMask' }, 'connectWallet');
+    return;
+  }
+  
+  try {
+    // ✅ استفاده از eth_requestAccounts که MetaMask رو باز می‌کنه
+    const accounts = await window.ethereum.request({ 
+      method: 'eth_requestAccounts' 
+    });
+    
+    if (accounts && accounts.length > 0) {
+      setAccount(accounts[0]);
+      showSuccess('Wallet connected!');
+    } else {
+      handleAppError({ message: 'No accounts found' }, 'connectWallet');
     }
-    try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      if (accounts.length > 0) {
-        setAccount(accounts[0]);
-        setStatus('✅ Wallet connected');
-      }
-    } catch (err) {
-      console.error('Connect error:', err);
-      setStatus('❌ Failed to connect wallet');
+  } catch (err) {
+    console.error('Connect wallet error:', err);
+    
+    // اگه user reject کرد
+    if (err.code === 4001) {
+      handleAppError({ message: 'Please approve wallet connection in MetaMask' }, 'connectWallet');
+    } 
+    // اگه MetaMask قفل باشه
+    else if (err.message?.includes('locked') || err.message?.includes('unlock')) {
+      handleAppError({ message: 'Please unlock MetaMask first' }, 'connectWallet');
+    } 
+    else {
+      handleAppError(err, 'connectWallet');
     }
   }
+}
 
-  async function donateToFund() {
-    if (!fund || !donateAmount || !account) {
-      setStatus('❌ Please enter amount and connect wallet');
-      return;
-    }
-
-    setDonating(true);
-    setStatus(' Processing donation...');
-
+  // ✅ تابع چک کردن موجودی USDC
+  async function checkUSDCBalance(address) {
     try {
-      const BASE_CHAIN_ID = '0x2105';
-      const currentChain = await window.ethereum.request({ method: 'eth_chainId' });
-      if (currentChain !== BASE_CHAIN_ID) {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_CHAIN_ID }]
-        });
-      }
-
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
       const contract = new ethers.Contract(USDC_ADDRESS, [
-        'function transfer(address to, uint amount) returns (bool)'
-      ], signer);
-
-      setStatus('⏳ Opening MetaMask...');
-      const tx = await contract.transfer(
-        fund.wallet_address,
-        ethers.parseUnits(donateAmount.toString(), 6)
-      );
-
-      setStatus('⏳ Waiting for confirmation...');
-      const receipt = await tx.wait();
-
-      await supabase
-        .from('travel_contributions')
-        .insert({
-          fund_id: fund.id,
-          contributor_address: account,
-          contributor_name: donateName.trim() || 'Anonymous',
-          amount: parseFloat(donateAmount),
-          tx_hash: receipt.hash
-        });
-
-      setStatus('✅ Donation successful! Thank you!');
-      setDonateAmount('');
-      setDonateName('');
-      await loadContributions(fund.id);
-      await loadFund();
-
+        'function balanceOf(address owner) view returns (uint256)'
+      ], provider);
+      
+      const balance = await contract.balanceOf(address);
+      return parseFloat(ethers.formatUnits(balance, 6));
     } catch (err) {
-      console.error('Donation error:', err);
-      if (err.code === 'ACTION_REJECTED') {
-        setStatus('❌ Transaction rejected');
-      } else {
-        setStatus('❌ Donation failed: ' + err.message);
-      }
-    } finally {
-      setDonating(false);
+      console.error('Balance check error:', err);
+      return null;
     }
   }
+
+async function donateToFund() {
+  if (!fund || !donateAmount || !account) {
+    handleAppError({ message: 'Please enter amount and connect wallet' }, 'donateToFund');
+    return;
+  }
+
+  const amount = parseFloat(donateAmount);
+  if (isNaN(amount) || amount <= 0) {
+    handleAppError({ message: 'Please enter a valid amount' }, 'donateToFund');
+    return;
+  }
+
+  setDonating(true);
+
+  try {
+    // ✅ 1. باز کردن MetaMask (حتی اگه قفل باشه)
+    const unlockedAccount = await ensureWalletUnlocked();
+    setAccount(unlockedAccount);
+
+    // ✅ 2. چک کردن network
+    await ensureBaseNetwork();
+
+    // ✅ 3. چک کردن موجودی USDC
+    const balance = await checkUSDCBalance(unlockedAccount);
+    
+    if (balance < amount) {
+      handleAppError({ 
+        message: `Insufficient USDC balance. You have ${balance.toFixed(2)} USDC, but need ${amount.toFixed(2)} USDC` 
+      }, 'donateToFund');
+      setDonating(false);
+      return;
+    }
+
+    // ✅ 4. ارسال تراکنش
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(USDC_ADDRESS, [
+      'function transfer(address to, uint amount) returns (bool)'
+    ], signer);
+
+    const tx = await contract.transfer(
+      fund.wallet_address,
+      ethers.parseUnits(donateAmount.toString(), 6)
+    );
+
+    const receipt = await tx.wait();
+
+    await supabase
+      .from('travel_contributions')
+      .insert({
+        fund_id: fund.id,
+        contributor_address: unlockedAccount,
+        contributor_name: donateName.trim() || 'Anonymous',
+        amount: amount,
+        tx_hash: receipt.hash
+      });
+
+    showSuccess('Donation successful! Thank you! 🎉');
+    celebrateDonation();
+    setDonateAmount('');
+    setDonateName('');
+    await loadContributions(fund.id);
+    await loadFund();
+
+  } catch (err) {
+    handleAppError(err, 'donateToFund');
+  } finally {
+    setDonating(false);
+  }
+}
 
   if (loading) {
     return (
@@ -186,7 +209,7 @@ export default function PublicFund() {
     return (
       <div className={`min-h-screen flex flex-col items-center justify-center ${isDark ? 'bg-gray-950 text-white' : 'bg-blue-50 text-gray-900'}`}>
         <div className="text-center">
-          <div className="text-6xl mb-4"></div>
+          <div className="text-6xl mb-4">👻</div>
           <h1 className="text-3xl font-bold mb-2">Fund Not Found</h1>
           <p className={`text-lg ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             This travel fund doesn't exist or is not public.
@@ -265,7 +288,7 @@ export default function PublicFund() {
           {isComplete && (
             <div className={`p-4 rounded-2xl mb-6 ${isDark ? 'bg-green-900/30 border border-green-800' : 'bg-green-50 border border-green-200'}`}>
               <p className={`text-center font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
-                 Fund Complete! Ready to travel!
+                🎉 Fund Complete! Ready to travel!
               </p>
             </div>
           )}
@@ -286,7 +309,8 @@ export default function PublicFund() {
                 />
                 <input
                   type="number"
-                  placeholder="Amount in USD"
+                  step="0.01"
+                  placeholder="Amount in USDC"
                   value={donateAmount}
                   onChange={(e) => setDonateAmount(e.target.value)}
                   className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-gray-800 border-gray-700 text-white' : 'bg-white border-gray-200 text-gray-900'}`}
@@ -296,7 +320,7 @@ export default function PublicFund() {
                     onClick={connectWallet}
                     className={`w-full py-3 rounded-xl font-semibold ${isDark ? 'bg-gray-700 text-white' : 'bg-gray-900 text-white'}`}
                   >
-                    Connect Wallet
+                    🦊 Connect Wallet
                   </button>
                 ) : (
                   <button
@@ -304,13 +328,8 @@ export default function PublicFund() {
                     disabled={donating || !donateAmount}
                     className="w-full py-3 rounded-xl font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400"
                   >
-                    {donating ? 'Processing...' : 'Send Contribution'}
+                    {donating ? '⏳ Processing...' : '💸 Send Contribution'}
                   </button>
-                )}
-                {status && (
-                  <p className={`text-center font-medium ${status.includes('❌') ? 'text-red-500' : status.includes('✅') ? 'text-green-500' : isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                    {status}
-                  </p>
                 )}
               </div>
             </div>
@@ -336,7 +355,7 @@ export default function PublicFund() {
                       </p>
                     </div>
                     <p className={`text-xl font-bold ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                      ${parseFloat(c.amount).toFixed(6)}
+                      ${parseFloat(c.amount).toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -344,6 +363,13 @@ export default function PublicFund() {
             </div>
           </div>
         )}
+
+        {/* Footer */}
+        <div className={`mt-8 text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+          <p className="text-xs">
+            Powered by <span className="font-semibold text-blue-500">PayOnBase24</span> • Built on Base Network
+          </p>
+        </div>
       </div>
     </div>
   );

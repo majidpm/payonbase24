@@ -441,6 +441,22 @@ if (loading) {
                   >
                     🔗 View
                   </button>
+                  {/* Show Tutorial Again */}
+<button
+  onClick={() => {
+    localStorage.removeItem('hasSeenTutorial')
+    // فقط یک پیام نشون بده
+    setTimeout(() => {
+      window.location.reload()
+    }, 500)
+  }}
+  className={`w-full text-left px-4 py-3 rounded-2xl transition-colors flex items-center gap-3 ${
+    isDark ? 'text-gray-300 hover:bg-gray-800' : 'text-gray-700 hover:bg-blue-50'
+  }`}
+>
+  <span className="text-2xl">🎓</span>
+  <span className="font-semibold">Show Tutorial Again</span>
+</button>
                 </div>
               </div>
             </div>

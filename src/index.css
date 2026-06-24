@@ -23,3 +23,27 @@ body {
 .animation-delay-4000 {
   animation-delay: 4s;
 }
+/* Fix react-joyride overlay issues */
+.react-joyride__overlay {
+  pointer-events: auto !important;
+}
+
+.react-joyride__tooltip {
+  z-index: 10001 !important;
+}
+
+/* Remove overlay after tour ends */
+[data-tour] {
+  position: relative;
+  z-index: 1;
+}
+
+/* Ensure proper cursor */
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* Fix for stuck overlay */
+body.react-joyride-overlay-active {
+  overflow: auto !important;
+}

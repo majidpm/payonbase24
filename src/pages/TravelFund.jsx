@@ -4,6 +4,9 @@ import { useTheme } from '../contexts/ThemeContext';
 import { ethers } from 'ethers';
 import { handleAppError, showSuccess } from '../lib/errorHandler';
 import { checkRateLimit } from '../lib/rateLimiter';
+import { celebrateFundComplete } from '../lib/celebrations'
+import EmptyState from '../components/EmptyState'
+import { ensureWalletUnlocked, checkUSDCBalance, ensureBaseNetwork } from '../lib/walletHelper';
 
 export default function TravelFund() {
   const { isDark } = useTheme();
@@ -22,6 +25,7 @@ export default function TravelFund() {
   const [donateErrors, setDonateErrors] = useState({});
   const [account, setAccount] = useState('');
   const [donating, setDonating] = useState(false);
+  const [status, setStatus] = useState('');
 
   // Split State
   const [splits, setSplits] = useState([]);
@@ -131,16 +135,35 @@ export default function TravelFund() {
   // LOAD DATA
   // ============================================
 
-  useEffect(() => {
-    loadUser();
-  }, []);
+useEffect(() => {
+  loadUser();
+}, []);
 
-  useEffect(() => {
-    if (userId) {
-      if (activeTab === 'fund') loadFunds();
-      else loadSplits();
-    }
-  }, [userId, activeTab]);
+useEffect(() => {
+  if (userId) {
+    if (activeTab === 'fund') loadFunds();
+    else loadSplits();
+  }
+}, [userId, activeTab]);
+
+// ✅ اضافه کردن useEffect برای celebration
+useEffect(() => {
+  if (funds.length > 0 && fundContributions) {
+    funds.forEach(fund => {
+      const contributions = fundContributions[fund.id] || [];
+      const totalCollected = contributions.reduce((sum, c) => sum + parseFloat(c.amount), 0);
+      const isComplete = totalCollected >= fund.target_amount;
+      
+      if (isComplete) {
+        const hasCelebrated = localStorage.getItem(`celebrated_fund_${fund.id}`);
+        if (!hasCelebrated) {
+          celebrateFundComplete();
+          localStorage.setItem(`celebrated_fund_${fund.id}`, 'true');
+        }
+      }
+    });
+  }
+}, [funds, fundContributions]);
 
   async function loadUser() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -175,35 +198,52 @@ export default function TravelFund() {
     }
   }
 
-  async function createFund() {
-    if (!validateFund()) return;
+async function createFund() {
+  if (!validateFund()) return;
 
-    const rateLimit = await checkRateLimit('create-travel-fund');
-    if (!rateLimit.allowed) {
-      handleAppError({ message: rateLimit.error }, 'createFund');
-      return;
-    }
-
-    try {
-      const { error } = await supabase
-        .from('travel_funds')
-        .insert({
-          user_id: userId,
-          title: newFund.title.trim(),
-          target_amount: parseFloat(newFund.target_amount),
-          wallet_address: newFund.wallet_address.trim(),
-          description: newFund.description?.trim() || null
-        });
-      if (error) throw error;
-      showSuccess(`Travel fund created! ${rateLimit.remaining} remaining`);
-      setShowCreateFund(false);
-      setNewFund({ title: '', target_amount: '', wallet_address: '', description: '' });
-      setFundErrors({});
-      await loadFunds();
-    } catch (err) {
-      handleAppError(err, 'createFund');
-    }
+  const rateLimit = await checkRateLimit('create-travel-fund');
+  if (!rateLimit.allowed) {
+    handleAppError({ message: rateLimit.error }, 'createFund');
+    return;
   }
+
+  try {
+    // تولید slug یکتا
+    const slug = Math.random().toString(36).substring(2, 10) + '-' + Date.now().toString(36);
+
+    const { data, error } = await supabase
+      .from('travel_funds')
+      .insert({
+        user_id: userId,
+        title: newFund.title.trim(),
+        target_amount: parseFloat(newFund.target_amount),
+        wallet_address: newFund.wallet_address.trim(),
+        description: newFund.description?.trim() || null,
+        slug: slug  // ✅ اضافه کردن slug
+      })
+      .select()  // ✅ گرفتن داده‌های برگشتی
+      .single();
+
+    if (error) throw error;
+
+    showSuccess(`Travel fund created! ${rateLimit.remaining} remaining`);
+    setShowCreateFund(false);
+    setNewFund({ title: '', target_amount: '', wallet_address: '', description: '' });
+    setFundErrors({});
+    await loadFunds();
+    
+    // ✅ نمایش لینک عمومی
+    const publicUrl = `${window.location.origin}/trip/${slug}`;
+    showSuccess(`Fund created! Public link: ${publicUrl}`);
+    
+    // یا کپی خودکار در clipboard
+    await navigator.clipboard.writeText(publicUrl);
+    showSuccess('Fund created! Link copied to clipboard');
+    
+  } catch (err) {
+    handleAppError(err, 'createFund');
+  }
+}
 
   async function deleteFund(id) {
     if (!window.confirm('Delete this fund? All contributions will be lost.')) return;
@@ -229,58 +269,176 @@ export default function TravelFund() {
     const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
     if (accounts.length > 0) setAccount(accounts[0]);
   }
-
-  async function donateToFund(fundId) {
-    if (!validateDonate(fundId)) return;
-    const amount = donateAmount[fundId];
-    const name = donateName[fundId] || 'Anonymous';
-    const fund = funds.find(f => f.id === fundId);
-    if (!fund) return;
-
-    setDonating(true);
-    try {
-      const BASE_CHAIN_ID = '0x2105';
-      const currentChain = await window.ethereum.request({ method: 'eth_chainId' });
-      if (currentChain !== BASE_CHAIN_ID) {
-        await window.ethereum.request({
-          method: 'wallet_switchEthereumChain',
-          params: [{ chainId: BASE_CHAIN_ID }]
-        });
-      }
-
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const contract = new ethers.Contract(USDC_ADDRESS, [
-        'function transfer(address to, uint amount) returns (bool)'
-      ], signer);
-
-      const tx = await contract.transfer(
-        fund.wallet_address,
-        ethers.parseUnits(amount.toString(), 6)
-      );
-      const receipt = await tx.wait();
-
-      await supabase
-        .from('travel_contributions')
-        .insert({
-          fund_id: fundId,
-          contributor_address: account,
-          contributor_name: name,
-          amount: parseFloat(amount),
-          tx_hash: receipt.hash
-        });
-
-      setDonateAmount({ ...donateAmount, [fundId]: '' });
-      setDonateName({ ...donateName, [fundId]: '' });
-      setDonateErrors({});
-      showSuccess('Donation successful!');
-      await loadFunds();
-    } catch (err) {
-      handleAppError(err, 'donateToFund');
-    } finally {
-      setDonating(false);
-    }
+  async function checkWalletStatus() {
+  if (typeof window.ethereum === 'undefined') {
+    return { connected: false, unlocked: false, error: 'MetaMask not installed' };
   }
+
+  try {
+    // چک کردن آیا account ها دسترسی دارن
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    
+    if (!accounts || accounts.length === 0) {
+      return { connected: false, unlocked: false, error: 'Wallet not connected' };
+    }
+
+    // چک کردن chain
+    const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+    if (chainId !== '0x2105') {
+      return { connected: true, unlocked: true, error: 'Wrong network', chainId };
+    }
+
+    return { connected: true, unlocked: true, account: accounts[0] };
+  } catch (err) {
+    return { connected: false, unlocked: false, error: err.message };
+  }
+}
+
+async function checkUSDCBalance(address) {
+  try {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const contract = new ethers.Contract(USDC_ADDRESS, [
+      'function balanceOf(address owner) view returns (uint256)'
+    ], provider);
+    
+    const balance = await contract.balanceOf(address);
+    return parseFloat(ethers.formatUnits(balance, 6));
+  } catch (err) {
+    console.error('Balance check error:', err);
+    return null;
+  }
+}
+// اضافه کردن این تابع‌ها (قبل از donateToFund)
+
+// ✅ تابع برای مطمئن شدن از unlock بودن MetaMask
+async function ensureWalletUnlocked() {
+  if (typeof window.ethereum === 'undefined') {
+    throw new Error('MetaMask not installed');
+  }
+
+  try {
+    // اول چک کن آیا accounts در دسترس هست
+    const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+    
+    if (!accounts || accounts.length === 0) {
+      // هیچ account ای نیست، باید connect کنیم
+      const newAccounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (!newAccounts || newAccounts.length === 0) {
+        throw new Error('Wallet connection rejected');
+      }
+      return newAccounts[0];
+    }
+
+    // account داریم، ولی باید چک کنیم MetaMask unlock هست یا نه
+    // با تلاش برای خواندن balance
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const contract = new ethers.Contract(USDC_ADDRESS, [
+        'function balanceOf(address owner) view returns (uint256)'
+      ], provider);
+      
+      // این خط اگه MetaMask قفل باشه، ارور میده
+      await contract.balanceOf(accounts[0]);
+      
+      // اگه به اینجا رسید، MetaMask unlock هست
+      return accounts[0];
+    } catch (balanceError) {
+      // MetaMask قفل هست، باید درخواست کنیم باز بشه
+      console.log('MetaMask might be locked, requesting accounts...');
+      const newAccounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (!newAccounts || newAccounts.length === 0) {
+        throw new Error('Please unlock MetaMask and try again');
+      }
+      return newAccounts[0];
+    }
+  } catch (err) {
+    if (err.code === 4001) {
+      throw new Error('Please approve wallet connection');
+    }
+    throw err;
+  }
+}
+
+async function getUSDCBalance(address) {
+  try {
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const contract = new ethers.Contract(USDC_ADDRESS, [
+      'function balanceOf(address owner) view returns (uint256)'
+    ], provider);
+    
+    const balance = await contract.balanceOf(address);
+    return parseFloat(ethers.formatUnits(balance, 6));
+  } catch (err) {
+    console.error('Balance check error:', err);
+    throw new Error('Could not check USDC balance. Please make sure you are on Base Network.');
+  }
+}
+
+async function donateToFund(fundId) {
+  if (!validateDonate(fundId)) return;
+  const amount = donateAmount[fundId];
+  const name = donateName[fundId] || 'Anonymous';
+  const fund = funds.find(f => f.id === fundId);
+  if (!fund) return;
+
+  setDonating(true);
+  
+  try {
+    // ✅ 1. باز کردن MetaMask (حتی اگه قفل باشه)
+    const unlockedAccount = await ensureWalletUnlocked();
+    setAccount(unlockedAccount);
+
+    // ✅ 2. چک کردن network
+    await ensureBaseNetwork();
+
+    // ✅ 3. چک کردن موجودی USDC
+    const balance = await checkUSDCBalance(unlockedAccount);
+    const donationAmount = parseFloat(amount);
+    
+    if (balance < donationAmount) {
+      handleAppError({ 
+        message: `Insufficient USDC balance. You have ${balance.toFixed(2)} USDC, but need ${donationAmount.toFixed(2)} USDC` 
+      }, 'donateToFund');
+      setDonating(false);
+      return;
+    }
+
+    // ✅ 4. ارسال تراکنش
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const contract = new ethers.Contract(USDC_ADDRESS, [
+      'function transfer(address to, uint amount) returns (bool)'
+    ], signer);
+
+    const tx = await contract.transfer(
+      fund.wallet_address,
+      ethers.parseUnits(amount.toString(), 6)
+    );
+
+    const receipt = await tx.wait();
+
+    await supabase
+      .from('travel_contributions')
+      .insert({
+        fund_id: fundId,
+        contributor_address: unlockedAccount,
+        contributor_name: name,
+        amount: donationAmount,
+        tx_hash: receipt.hash
+      });
+
+    showSuccess('Donation successful!');
+    celebrateDonation();
+    setDonateAmount({ ...donateAmount, [fundId]: '' });
+    setDonateName({ ...donateName, [fundId]: '' });
+    setDonateErrors({});
+    await loadFunds();
+  } catch (err) {
+    handleAppError(err, 'donateToFund');
+  } finally {
+    setDonating(false);
+  }
+}
 
   async function loadSplits() {
     setLoading(true);
@@ -660,17 +818,18 @@ export default function TravelFund() {
                     </div>
                   ))}
                 </div>
-              ) : funds.length === 0 ? (
-                <div className={`rounded-xl p-6 sm:p-8 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                  <div className="text-4xl sm:text-5xl mb-3">🌍</div>
-                  <h3 className={`text-base sm:text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    No Travel Funds Yet
-                  </h3>
-                  <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Create your first travel fund and start collecting contributions!
-                  </p>
-                </div>
-              ) : (
+            ) : funds.length === 0 ? (
+  <EmptyState
+    illustration="travel"
+    title="No Travel Funds Yet"
+    description="Create your first travel fund and start collecting contributions for your next adventure!"
+    actionText="+ Create Your First Fund"
+    onAction={() => {
+      setShowCreateFund(true)
+      setFundErrors({})
+    }}
+  />
+) : (
                 <div className="space-y-4">
                   {funds.map((fund) => {
                     const contributions = fundContributions[fund.id] || [];
@@ -741,6 +900,7 @@ export default function TravelFund() {
                               <p className={`text-center text-xs font-semibold ${isDark ? 'text-green-400' : 'text-green-700'}`}>
                                 🎉 Fund Complete! You're ready to travel!
                               </p>
+                              
                             </div>
                           )}
 
@@ -810,7 +970,17 @@ export default function TravelFund() {
                                   >
                                     {donating ? '⏳ Processing...' : 'Donate'}
                                   </button>
+                                  
                                 )}
+                                {status && (
+  <p className={`text-center text-xs font-medium mt-2 ${
+    status.includes('❌') ? 'text-red-500' : 
+    status.includes('✅') ? 'text-green-500' : 
+    isDark ? 'text-gray-300' : 'text-gray-700'
+  }`}>
+    {status}
+  </p>
+)}
                               </div>
                               {errorText(donateError)}
                               {donateErrors[fund.id]?.name && errorText(donateErrors[fund.id].name)}
@@ -934,16 +1104,17 @@ export default function TravelFund() {
                   ))}
                 </div>
               ) : !selectedSplit && splits.length === 0 ? (
-                <div className={`rounded-xl p-6 sm:p-8 border text-center ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-                  <div className="text-4xl sm:text-5xl mb-3">🧮</div>
-                  <h3 className={`text-base sm:text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    No Splits Yet
-                  </h3>
-                  <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    Create your first expense split to track shared costs!
-                  </p>
-                </div>
-              ) : !selectedSplit && splits.length > 0 ? (
+  <EmptyState
+    illustration="travel"
+    title="No Expense Splits Yet"
+    description="Create your first expense split to track shared costs with friends and family!"
+    actionText="+ Create Your First Split"
+    onAction={() => {
+      setShowCreateSplit(true)
+      setSplitErrors({})
+    }}
+  />
+) : !selectedSplit && splits.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {splits.map((split) => (
                     <div

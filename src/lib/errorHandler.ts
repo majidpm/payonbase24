@@ -4,85 +4,157 @@ export type AppError = {
   code?: string
   message: string
   status?: number
+  reason?: string
+  shortMessage?: string
 }
 
 export function handleAppError(error: any, context: string = '') {
   console.error(`[${context}] Error:`, error)
 
+  // تبدیل error به string برای چک کردن راحت‌تر
+  const errorString = String(error?.message || error?.reason || error?.shortMessage || error || '')
+
+  // ============================================
   // Supabase errors
-  if (error.code) {
+  // ============================================
+  if (error?.code && typeof error.code === 'string' && !error.code.match(/^[A-Z_]+$/)) {
     switch (error.code) {
       case '23505':
         toast.error('This already exists. Please try a different value.')
-        break
+        return
       case '23503':
         toast.error('Related record not found. Please refresh and try again.')
-        break
+        return
       case '23502':
         toast.error('Missing required field. Please check your input.')
-        break
+        return
       case '42P01':
         toast.error('Database table not found. Please contact support.')
-        break
+        return
       case 'PGRST116':
         // Not found - usually OK, don't show error
         return
       case 'PGRST301':
         toast.error('Multiple records found. Expected only one.')
-        break
+        return
       case '42501':
         toast.error('Permission denied. You don\'t have access to this resource.')
-        break
+        return
       case '28P01':
         toast.error('Authentication failed. Please login again.')
-        break
-      default:
-        toast.error(`Database error: ${error.message}`)
+        return
     }
   }
-  // Ethereum / Web3 errors
-  else if (error.code === 'ACTION_REJECTED') {
-    toast.error('Transaction rejected by user')
+
+  // ============================================
+  // Ethereum / Web3 errors (اول چک کنیم)
+  // ============================================
+  
+  // ❌ مهم‌ترین: Insufficient balance (USDC)
+  if (errorString.includes('exceeds balance') || errorString.includes('Insufficient')) {
+    toast.error('❌ Insufficient USDC balance')
+    return
   }
-  else if (error.code === 'INSUFFICIENT_FUNDS') {
-    toast.error('Insufficient USDC balance')
+  
+  // User rejected transaction
+  if (error?.code === 'ACTION_REJECTED' || errorString.includes('user rejected') || errorString.includes('User denied')) {
+    toast.error(' Transaction rejected')
+    return
   }
-  else if (error.code === 'CHAIN_MISMATCH') {
+  
+  // Insufficient ETH for gas
+  if (error?.code === 'INSUFFICIENT_FUNDS' || errorString.includes('insufficient funds for gas')) {
+    toast.error('Insufficient ETH for gas fees')
+    return
+  }
+  
+  // Wrong network
+  if (error?.code === 'CHAIN_MISMATCH' || errorString.includes('chain mismatch')) {
     toast.error('Please switch to Base Network')
+    return
   }
-  else if (error.code === 'NETWORK_ERROR') {
+  
+  // Network error
+  if (error?.code === 'NETWORK_ERROR' || errorString.includes('network error')) {
     toast.error('Network error. Please check your connection.')
+    return
   }
-  else if (error.code === 'USER_REJECTED_REQUEST') {
+  
+  // Wallet connection rejected
+  if (error?.code === 'USER_REJECTED_REQUEST' || errorString.includes('wallet connection rejected')) {
     toast.error('Wallet connection rejected')
+    return
   }
-  // Rate limit errors
-  else if (error.message?.includes('Rate limit')) {
-    toast.error('Too many requests. Please wait a moment.')
+  
+  // MetaMask locked
+  if (errorString.includes('locked') || errorString.includes('unlock')) {
+    toast.error(' Please unlock MetaMask')
+    return
   }
-  // MetaMask / Wallet errors
-  else if (error.message?.includes('MetaMask')) {
-    toast.error('MetaMask error. Please check your wallet.')
+  
+  // MetaMask not installed
+  if (errorString.includes('MetaMask') || errorString.includes('ethereum')) {
+    toast.error('Please install MetaMask')
+    return
   }
-  else if (error.message?.includes('User denied')) {
-    toast.error('Action denied by user')
-  }
-  // Network errors
-  else if (error.message?.includes('fetch') || error.message?.includes('network')) {
-    toast.error('Network error. Please check your internet connection.')
-  }
-  // Generic errors
-  else if (error.message) {
-    toast.error(error.message)
-  }
-  else {
-    toast.error('Something went wrong. Please try again.')
+  
+  // Transaction failed
+  if (error?.code === 'CALL_EXCEPTION' || errorString.includes('execution reverted')) {
+    // اگه reason داره، نشونش بده
+    if (error?.reason && !errorString.includes('exceeds balance')) {
+      toast.error(`Transaction failed: ${error.reason}`)
+    } else {
+      toast.error('Transaction failed')
+    }
+    return
   }
 
-  // Send to error tracking in production
-  if (import.meta.env.PROD) {
-    // Sentry.captureException(error, { tags: { context } })
+  // ============================================
+  // Rate limit errors
+  // ============================================
+  if (errorString.includes('Rate limit')) {
+    toast.error('Too many requests. Please wait a moment.')
+    return
   }
+
+  // ============================================
+  // Network errors
+  // ============================================
+  if (errorString.includes('fetch') || errorString.includes('Failed to fetch')) {
+    toast.error('Network error. Please check your internet connection.')
+    return
+  }
+
+  // ============================================
+  // Generic errors
+  // ============================================
+  
+  // اول shortMessage (ethers.js)
+  if (error?.shortMessage) {
+    toast.error(error.shortMessage)
+    return
+  }
+  
+  // بعد reason (ethers.js)
+  if (error?.reason) {
+    toast.error(error.reason)
+    return
+  }
+  
+  // بعد message
+  if (error?.message) {
+    // اگه message خیلی طولانی بود، کوتاه کن
+    const msg = error.message
+    if (msg.length > 100) {
+      toast.error('Something went wrong. Please try again.')
+    } else {
+      toast.error(msg)
+    }
+    return
+  }
+  
+  // در نهایت
+  toast.error('Something went wrong. Please try again.')
 }
 
 // Success toast helper
