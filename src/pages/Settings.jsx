@@ -2,551 +2,649 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useTheme } from '../contexts/ThemeContext'
+import { usePrivy, useWallets } from '@privy-io/react-auth'
+import { useAutoProfile } from '../hooks/useAutoProfile'
 import { handleAppError, showSuccess } from '../lib/errorHandler'
-import { FormSkeleton } from '../components/Skeleton'
 
 export default function Settings() {
-  const { isDark } = useTheme()
+  const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
-  
-  
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  
-  const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [bio, setBio] = useState('');
-  const [walletAddress, setWalletAddress] = useState('');
-  
-  const [socials, setSocials] = useState({
-    twitter: '', instagram: '', github: '',
-    telegram: '', youtube: '', discord: '', website: ''
-  });
-  
-  const [usernameError, setUsernameError] = useState('');
-  const [walletError, setWalletError] = useState('');
-  const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState('');
-  const [checkingUsername, setCheckingUsername] = useState(false);
+  const { user: privyUser } = usePrivy()
+  const { wallets } = useWallets()
+  const { profile, loading: profileLoading, refresh: refreshProfile } = useAutoProfile()
 
+  const [saving, setSaving] = useState(false)
+  const [checkingUsername, setCheckingUsername] = useState(false)
+  const [usernameAvailable, setUsernameAvailable] = useState(null)
+
+  const [emailInput, setEmailInput] = useState('')
+  const [addingEmail, setAddingEmail] = useState(false)
+  const [editingEmail, setEditingEmail] = useState(false)
+
+  // ✅ ولت متصل Privy
+  const ethereumWallet = wallets.find(w => 
+    w.chainType === 'ethereum' || w.address?.startsWith('0x')
+  )
+  const connectedAddress = ethereumWallet?.address
+
+  const [formData, setFormData] = useState({
+    display_name: '',
+    username: '',
+    bio: '',
+    wallet_address: '',
+    twitter: '',
+    instagram: '',
+    github: '',
+    telegram: '',
+    youtube: '',
+    discord: '',
+    website: ''
+  })
+
+  const [errors, setErrors] = useState({})
+
+  // ✅ وقتی profile لود شد، فرم رو پر کن
   useEffect(() => {
-    loadProfile();
-  }, []);
-
-  async function loadProfile() {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { navigate('/auth'); return; }
-      setUser(user);
-
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      if (profileData) {
-        setProfile(profileData);
-        setUsername(profileData.username || '');
-        setDisplayName(profileData.display_name || '');
-        setBio(profileData.bio || '');
-        setWalletAddress(profileData.wallet_address || '');
-        setSocials({
-          twitter: profileData.twitter || '',
-          instagram: profileData.instagram || '',
-          github: profileData.github || '',
-          telegram: profileData.telegram || '',
-          youtube: profileData.youtube || '',
-          discord: profileData.discord || '',
-          website: profileData.website || ''
-        });
-      }
-    } catch (err) {
-      console.error('Error loading profile:', err);
-      setMessage('❌ Failed to load profile');
-      setMessageType('error');
-    } finally {
-      setLoading(false);
+    if (profile) {
+      setFormData({
+        display_name: profile.display_name || '',
+        username: profile.username || '',
+        bio: profile.bio || '',
+        wallet_address: profile.wallet_address || '',
+        twitter: profile.twitter || '',
+        instagram: profile.instagram || '',
+        github: profile.github || '',
+        telegram: profile.telegram || '',
+        youtube: profile.youtube || '',
+        discord: profile.discord || '',
+        website: profile.website || ''
+      })
+      // ✅ پر کردن email input از پروفایل
+      setEmailInput(profile.email || '')
+      setUsernameAvailable(true)
     }
-  }
+  }, [profile])
 
-  async function checkUsernameAvailability(value) {
-    if (!value || value === profile?.username) {
-      setUsernameError('');
-      return true;
-    }
-    if (!/^[a-zA-Z0-9_]{3,20}$/.test(value)) {
-      setUsernameError('Username must be 3-20 characters (letters, numbers, underscores only)');
-      return false;
-    }
-    setCheckingUsername(true);
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('username', value)
-        .single();
-      if (error && error.code === 'PGRST116') {
-        setUsernameError('');
-        return true;
-      } else if (data) {
-        setUsernameError('This username is already taken');
-        return false;
-      }
-    } catch (err) {
-      console.error('Username check error:', err);
-    } finally {
-      setCheckingUsername(false);
-    }
-  }
-
-  function validateWallet(address) {
-    if (!address) { setWalletError(''); return true; }
-    const ethRegex = /^0x[a-fA-F0-9]{40}$/;
-    if (!ethRegex.test(address)) {
-      setWalletError('Invalid wallet address (must start with 0x and be 42 characters)');
-      return false;
-    }
-    setWalletError('');
-    return true;
-  }
-
-  async function updateProfile(e) {
-    e.preventDefault()
-    setMessage('')
-    
-    if (username && !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
-      setUsernameError('Username must be 3-20 characters (letters, numbers, underscores only)')
+  // ✅ چک کردن username
+  async function checkUsername(username) {
+    if (!username || username.length < 3) {
+      setUsernameAvailable(null)
       return
     }
-    if (walletAddress && !validateWallet(walletAddress)) return
+    if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
+      setUsernameAvailable(false)
+      return
+    }
+    if (profile && username === profile.username) {
+      setUsernameAvailable(true)
+      return
+    }
 
-    setSaving(true)
+    setCheckingUsername(true)
     try {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('profiles')
-        .upsert({
-          user_id: user.id,
-          username: username.trim() || null,
-          display_name: displayName.trim() || null,
-          bio: bio.trim() || null,
-          wallet_address: walletAddress.trim() || null,
-          twitter: socials.twitter.trim() || null,
-          instagram: socials.instagram.trim() || null,
-          github: socials.github.trim() || null,
-          telegram: socials.telegram.trim() || null,
-          youtube: socials.youtube.trim() || null,
-          discord: socials.discord.trim() || null,
-          website: socials.website.trim() || null,
-          updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' })
-        .select()
-        .single()
+        .select('id')
+        .eq('username', username.toLowerCase())
+        .maybeSingle()
+      setUsernameAvailable(!data)
+    } catch (err) {
+      console.error('Username check error:', err)
+    } finally {
+      setCheckingUsername(false)
+    }
+  }
 
-      if (error) {
-        if (error.code === '23505') {
-          setUsernameError('This username is already taken')
-        } else {
-          throw error
+  function handleUsernameChange(value) {
+    const cleanValue = value.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    setFormData({ ...formData, username: cleanValue })
+    setUsernameAvailable(null)
+    clearTimeout(window.usernameCheckTimeout)
+    window.usernameCheckTimeout = setTimeout(() => checkUsername(cleanValue), 500)
+  }
+
+  function validateForm() {
+    const errs = {}
+    if (!formData.display_name.trim()) errs.display_name = 'Display name is required'
+    if (formData.bio && formData.bio.length > 200) errs.bio = 'Bio too long'
+    if (formData.wallet_address && !/^0x[a-fA-F0-9]{40}$/.test(formData.wallet_address.trim())) {
+      errs.wallet_address = 'Invalid Ethereum address'
+    }
+    if (formData.username) {
+      if (formData.username.length < 3 || formData.username.length > 30) {
+        errs.username = 'Username must be between 3-30 characters'
+      } else if (!/^[a-zA-Z0-9_-]+$/.test(formData.username)) {
+        errs.username = 'Invalid characters'
+      } else if (usernameAvailable === false) {
+        errs.username = 'This username is already taken'
+      }
+    }
+    setErrors(errs)
+    return Object.keys(errs).length === 0
+  }
+
+async function handleSave() {
+  if (!validateForm() || !profile) {
+    console.error('❌ Validation failed or no profile')
+    return
+  }
+
+  // ✅ چک نهایی تکراری نبودن username
+  if (formData.username && formData.username !== profile.username) {
+    if (usernameAvailable === false) {
+      handleAppError({ message: 'This username is already taken' }, 'saveSettings')
+      return
+    }
+
+    if (usernameAvailable === null) {
+      // هنوز چک نشده، الان چک کن
+      setSaving(true)
+      try {
+        const { data: existing } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('username', formData.username.toLowerCase())
+          .maybeSingle()
+
+        if (existing) {
+          handleAppError({ message: 'This username is already taken' }, 'saveSettings')
+          setSaving(false)
+          return
         }
+      } catch (err) {
+        console.error('Username check error:', err)
+        handleAppError({ message: 'Failed to check username' }, 'saveSettings')
+        setSaving(false)
+        return
+      }
+    }
+  }
+
+  setSaving(true)
+  try {
+    const oldUsername = profile.username
+    const newUsername = formData.username.trim().toLowerCase() || null
+
+    const updateData = {
+      display_name: formData.display_name.trim(),
+      username: newUsername,
+      bio: formData.bio.trim() || null,
+      wallet_address: formData.wallet_address.trim() || null,
+      twitter: formData.twitter.trim() || null,
+      instagram: formData.instagram.trim() || null,
+      github: formData.github.trim() || null,
+      telegram: formData.telegram.trim() || null,
+      youtube: formData.youtube.trim() || null,
+      discord: formData.discord.trim() || null,
+      website: formData.website.trim() || null,
+      updated_at: new Date().toISOString()
+    }
+
+    console.log('💾 Saving profile:', updateData)
+
+    // 1. آپدیت profiles
+    const { data, error } = await supabase
+      .from('profiles')
+      .update(updateData)
+      .eq('id', profile.id)
+      .select()
+      .single()
+
+    if (error) {
+      console.error('❌ Save error:', error)
+      
+      // اگه خطای تکراری بودن username بود
+      if (error.code === '23505' && error.message?.includes('username')) {
+        handleAppError({ message: 'This username is already taken' }, 'saveSettings')
+        return
+      }
+      
+      throw error
+    }
+
+    console.log('✅ Profile saved:', data)
+
+    // 2. ✅ آپدیت user_links اگه username تغییر کرده
+    if (oldUsername !== newUsername) {
+      try {
+        console.log('🔄 Updating user_links for username change:', oldUsername, '→', newUsername)
+        
+        const { error: linkError } = await supabase
+          .from('user_links')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('profile_id', profile.id)
+
+        if (linkError) {
+          console.error('⚠️ Failed to update user_links:', linkError)
+        } else {
+          console.log('✅ user_links updated')
+        }
+      } catch (linkErr) {
+        console.error('⚠️ user_links update failed:', linkErr)
+      }
+    }
+
+    showSuccess('Settings saved successfully! ✅')
+    refreshProfile()
+    
+    // ارسال event برای آپدیت PublicProfile
+    window.dispatchEvent(new CustomEvent('profileUpdated', { detail: data }))
+  } catch (err) {
+    console.error('❌ Save exception:', err)
+    handleAppError(err, 'saveSettings')
+  } finally {
+    setSaving(false)
+  }
+}
+
+  // ✅ Add یا Change Email
+  async function handleEmailAction() {
+    if (!emailInput.trim() || !profile) return
+
+    // Validate email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(emailInput.trim())) {
+      handleAppError({ message: 'Invalid email format' }, 'emailAction')
+      return
+    }
+
+    setAddingEmail(true)
+    try {
+      // چک کن اگه این ایمیل قبلاً استفاده شده
+      const { data: existing } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', emailInput.trim().toLowerCase())
+        .maybeSingle()
+
+      if (existing && existing.id !== profile.id) {
+        handleAppError({ message: 'This email is already in use by another account' }, 'emailAction')
+        setAddingEmail(false)
         return
       }
 
-      setProfile(data)
-      showSuccess('Profile updated successfully!')
-      setTimeout(() => setMessage(''), 3000)
-    } catch (err) {
-      handleAppError(err, 'updateProfile')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handleLogout() {
-    if (window.confirm('Are you sure you want to sign out?')) {
-      try {
-        await supabase.auth.signOut()
-        showSuccess('Signed out successfully')
-        navigate('/')
-      } catch (err) {
-        handleAppError(err, 'handleLogout')
-      }
-    }
-  }
-
-  async function handleResetPassword() {
-    if (!user?.email) return
-    
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-        redirectTo: `${window.location.origin}/auth`
-      })
+      const { error } = await supabase
+        .from('profiles')
+        .update({ email: emailInput.trim().toLowerCase() })
+        .eq('id', profile.id)
 
       if (error) throw error
-      
-      showSuccess('Password reset email sent! Check your inbox.')
+
+      const action = profile.email ? 'changed' : 'added'
+      showSuccess(`Email ${action} successfully! `)
+      setEditingEmail(false)
+      refreshProfile()
     } catch (err) {
-      handleAppError(err, 'handleResetPassword')
+      console.error('Error updating email:', err)
+      handleAppError(err, 'emailAction')
+    } finally {
+      setAddingEmail(false)
     }
   }
 
-  function getPublicProfileUrl() {
-    if (!username) return null;
-    return `${window.location.origin}/u/${username}`;
+  // ✅ Use Current Wallet
+  function useCurrentWallet() {
+    if (!connectedAddress) return
+    setFormData({ ...formData, wallet_address: connectedAddress })
+    showSuccess('Current wallet applied! 🔗')
   }
 
-if (loading) {
+  const inputClass = (hasError) => `w-full px-4 py-3 rounded-xl border focus:outline-none text-sm transition-all ${
+    hasError
+      ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
+      : isDark
+        ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500'
+        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
+  }`
+
+  const errorText = (msg) => msg ? (
+    <p className="text-red-500 text-xs mt-1 flex items-center gap-1">
+      <span>⚠️</span> {msg}
+    </p>
+  ) : null
+
+  if (profileLoading || !profile) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
+      </div>
+    )
+  }
+
+  // ✅ ایمیل فعلی (از پروفایل یا Privy)
+  const currentEmail = profile?.email || privyUser?.email?.address
+
   return (
-    <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
-      <div className="p-4 sm:p-6 md:p-8">
-        <div className="max-w-2xl mx-auto">
-          <div className={`h-8 rounded w-48 mb-6 animate-pulse ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
-          <FormSkeleton />
+    <div className="px-4 sm:px-6 py-6">
+      <div className="max-w-3xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            ️ Settings
+          </h1>
+          <p className={`text-sm mt-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            Manage your profile and preferences
+          </p>
+        </div>
+
+        {/* Account Info */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            👤 Account Information
+          </h2>
+          <div className="space-y-3">
+            <div className={`p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+              <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Privy ID</p>
+              <p className={`text-xs font-mono truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                {privyUser?.id}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* ✅ Email Section - همیشه نشون داده میشه */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            📧 Email Address
+          </h2>
+          <p className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            {currentEmail 
+              ? 'Update your email address for account recovery' 
+              : 'Add an email for backup access and notifications'}
+          </p>
+
+          <div className="space-y-4">
+            {editingEmail ? (
+              // ✅ حالت ویرایش
+              <div className="space-y-3">
+                <div>
+                  <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    New Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="your@email.com"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className={inputClass(false)}
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleEmailAction}
+                    disabled={!emailInput.trim() || addingEmail}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                      !emailInput.trim() || addingEmail
+                        ? 'bg-gray-400 cursor-not-allowed text-white'
+                        : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                    }`}
+                  >
+                    {addingEmail ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        Saving...
+                      </span>
+                    ) : currentEmail ? (
+                      '💾 Save New Email'
+                    ) : (
+                      '📧 Add Email'
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingEmail(false)
+                      setEmailInput(currentEmail || '')
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-sm font-medium transition ${
+                      isDark ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // ✅ حالت نمایش
+              <div className="space-y-3">
+                <div className={`p-4 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
+                  <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    Current Email
+                  </p>
+                  {currentEmail ? (
+                    <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {currentEmail}
+                    </p>
+                  ) : (
+                    <p className={`text-sm italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                      No email added yet
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => {
+                    setEditingEmail(true)
+                    setEmailInput(currentEmail || '')
+                  }}
+                  className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    isDark 
+                      ? 'bg-blue-900/30 hover:bg-blue-900/50 text-blue-400 border border-blue-800' 
+                      : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200'
+                  }`}
+                >
+                  {currentEmail ? '✏️ Change Email' : '📧 Add Email'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Profile Section */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            ✏️ Profile Details
+          </h2>
+          <div className="space-y-4">
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                Display Name *
+              </label>
+              <input
+                type="text"
+                placeholder="Your name"
+                value={formData.display_name}
+                onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                className={inputClass(!!errors.display_name)}
+              />
+              {errorText(errors.display_name)}
+            </div>
+
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+  Username
+</label>
+              <div className="flex">
+                <span className={`inline-flex items-center px-3 rounded-l-xl border border-r-0 text-sm ${
+                  isDark ? 'bg-gray-800 border-gray-700 text-gray-400' : 'bg-gray-50 border-gray-200 text-gray-500'
+                }`}>@</span>
+               <input
+  type="text"
+  placeholder="Choose a username"
+  value={formData.username || ''}
+  onChange={(e) => handleUsernameChange(e.target.value)}
+  className={`${inputClass(!!errors.username)} rounded-l-none`}
+/>
+              </div>
+              
+              <div className="mt-1 flex items-center gap-2">
+                {profile?.username && (
+                  <p className="text-xs text-green-500">
+                    ✅ Username already set: @{profile.username}
+                  </p>
+                )}
+                {!profile?.username && checkingUsername && (
+                  <p className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    ⏳ Checking availability...
+                  </p>
+                )}
+                {!profile?.username && !checkingUsername && usernameAvailable === true && formData.username && (
+                  <p className="text-xs text-green-500">✅ Available</p>
+                )}
+                {!profile?.username && !checkingUsername && usernameAvailable === false && (
+                  <p className="text-xs text-red-500">❌ Taken</p>
+                )}
+              </div>
+              
+              {errorText(errors.username)}
+              
+              {!profile?.username && formData.username && (
+                <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  Your public profile: <span className="font-mono">{window.location.origin}/u/{formData.username}</span>
+                </p>
+              )}
+              
+              {profile?.username && (
+                <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  Your public profile: <span className="font-mono">{window.location.origin}/u/{profile.username}</span>
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Bio</label>
+              <textarea
+                placeholder="Tell us about yourself..."
+                value={formData.bio}
+                onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
+                rows={3}
+                className={`${inputClass(!!errors.bio)} resize-none`}
+              />
+              {errorText(errors.bio)}
+              <p className={`text-xs mt-1 text-right ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                {formData.bio.length}/200
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Wallet Section */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>💳 Wallet Address</h2>
+          <p className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            This address will receive all your payments, donations, and travel fund contributions
+          </p>
+
+          <div className="space-y-4">
+            {connectedAddress && (
+              <div className={`p-4 rounded-xl border-2 border-dashed ${
+                isDark ? 'bg-blue-900/20 border-blue-500/50' : 'bg-blue-50 border-blue-300'
+              }`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">🦊</span>
+                  <p className={`text-sm font-semibold ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+                    Currently Connected Wallet
+                  </p>
+                </div>
+                <p className={`font-mono text-xs break-all mb-3 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {connectedAddress}
+                </p>
+                <button
+                  onClick={useCurrentWallet}
+                  disabled={formData.wallet_address === connectedAddress}
+                  className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    formData.wallet_address === connectedAddress
+                      ? 'bg-green-500/20 text-green-500 cursor-default'
+                      : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white'
+                  }`}
+                >
+                  {formData.wallet_address === connectedAddress ? '✅ Already Using' : '🔄 Use Current Wallet'}
+                </button>
+              </div>
+            )}
+
+            <div>
+              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                Or Enter Manually
+              </label>
+              <input
+                type="text"
+                placeholder="0x..."
+                value={formData.wallet_address}
+                onChange={(e) => setFormData({ ...formData, wallet_address: e.target.value })}
+                className={`${inputClass(!!errors.wallet_address)} font-mono text-xs`}
+              />
+              {errorText(errors.wallet_address)}
+            </div>
+          </div>
+        </div>
+
+        {/* Social Media */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>🔗 Social Media</h2>
+          <div className="space-y-4">
+            {[
+              { key: 'twitter', icon: '🐦', label: 'Twitter / X' },
+              { key: 'instagram', icon: '📸', label: 'Instagram' },
+              { key: 'github', icon: '💻', label: 'GitHub' },
+              { key: 'telegram', icon: '✈️', label: 'Telegram' },
+              { key: 'youtube', icon: '📺', label: 'YouTube' },
+              { key: 'discord', icon: '🎮', label: 'Discord' },
+              { key: 'website', icon: '🌍', label: 'Website' }
+            ].map(({ key, icon, label }) => (
+              <div key={key}>
+                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  {icon} {label}
+                </label>
+                <input
+                  type={key === 'website' ? 'url' : 'text'}
+                  placeholder={key === 'website' ? 'https://yourwebsite.com' : 'username'}
+                  value={formData[key]}
+                  onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                  className={inputClass(false)}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Appearance */}
+        <div className={`rounded-2xl border p-6 mb-6 ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-gray-200 shadow-sm'}`}>
+          <h2 className={`text-lg font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}> Appearance</h2>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Dark Mode</p>
+              <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Toggle theme</p>
+            </div>
+            <button
+              onClick={toggleTheme}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                isDark ? 'bg-blue-600' : 'bg-gray-200'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                isDark ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Save Button */}
+        <div className="flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving || checkingUsername}
+            className="px-6 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+          >
+            {saving ? (
+              <span className="flex items-center gap-2">
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                Saving...
+              </span>
+            ) : '💾 Save Changes'}
+          </button>
         </div>
       </div>
     </div>
   )
-}
-
-  const socialFields = [
-    { key: 'twitter', icon: '🐦', label: 'Twitter / X', placeholder: 'username' },
-    { key: 'instagram', icon: '📸', label: 'Instagram', placeholder: 'username' },
-    { key: 'github', icon: '💻', label: 'GitHub', placeholder: 'username' },
-    { key: 'telegram', icon: '✈️', label: 'Telegram', placeholder: 'username' },
-    { key: 'youtube', icon: '📺', label: 'YouTube', placeholder: 'channel or URL' },
-    { key: 'discord', icon: '🎮', label: 'Discord', placeholder: 'username or ID' },
-    { key: 'website', icon: '🌍', label: 'Website', placeholder: 'https://example.com' }
-  ];
-
-  return (
-    <div className="p-4 sm:p-6 md:p-8">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-6 sm:mb-10">
-          <h1 className={`text-3xl sm:text-4xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            ⚙️ Settings
-          </h1>
-          <p className={`text-base sm:text-lg ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            Manage your profile and account preferences
-          </p>
-        </div>
-
-        {/* Message */}
-        {message && (
-          <div className={`mb-6 p-3 sm:p-4 rounded-2xl text-center text-sm sm:text-base font-medium transition-all ${
-            messageType === 'success'
-              ? isDark ? 'bg-green-900/30 text-green-400 border border-green-800' : 'bg-green-50 text-green-700 border border-green-200'
-              : isDark ? 'bg-red-900/30 text-red-400 border border-red-800' : 'bg-red-50 text-red-700 border border-red-200'
-          }`}>
-            {message}
-          </div>
-        )}
-
-        <form onSubmit={updateProfile} className="space-y-6 sm:space-y-8">
-          {/* Profile Information */}
-          <div className={`rounded-3xl shadow-xl p-5 sm:p-8 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-            <h2 className={`text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              <span className="text-2xl sm:text-3xl">👤</span>
-              Profile Information
-            </h2>
-
-            <div className="space-y-4 sm:space-y-6">
-              {/* Email */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Email Address
-                </label>
-                <div className={`w-full px-4 sm:px-5 py-3 sm:py-4 rounded-2xl border text-sm sm:text-base ${isDark ? 'bg-gray-800 border-gray-700 text-gray-400' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
-                  {user?.email}
-                </div>
-                <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  Email cannot be changed
-                </p>
-              </div>
-
-              {/* Username */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Username
-                </label>
-                <div className="relative">
-                  <span className={`absolute left-4 top-1/2 -translate-y-1/2 text-sm font-mono ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                    /u/
-                  </span>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => { setUsername(e.target.value); checkUsernameAvailability(e.target.value); }}
-                    placeholder="your-username"
-                    className={`w-full pl-12 sm:pl-14 pr-5 py-3 sm:py-4 border rounded-2xl focus:outline-none text-base sm:text-lg font-mono ${
-                      usernameError
-                        ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
-                        : isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500' : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                    }`}
-                  />
-                  {checkingUsername && (
-                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs sm:text-sm text-blue-500">
-                      Checking...
-                    </span>
-                  )}
-                </div>
-                {usernameError && (
-                  <p className="text-red-500 text-xs mt-2 flex items-center gap-1">
-                    <span>⚠️</span> {usernameError}
-                  </p>
-                )}
-                <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  Your public profile: <span className="font-mono text-blue-500">/u/{username || 'username'}</span>
-                </p>
-              </div>
-
-              {/* Display Name */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Display Name
-                </label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Your name"
-                  className={`w-full px-4 sm:px-5 py-3 sm:py-4 border rounded-2xl focus:outline-none text-base sm:text-lg ${
-                    isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500' : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                  }`}
-                />
-                <p className={`text-xs mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  This name will be displayed on your profile
-                </p>
-              </div>
-
-              {/* Bio */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Bio
-                </label>
-                <textarea
-                  value={bio}
-                  onChange={(e) => setBio(e.target.value)}
-                  placeholder="Tell us about yourself..."
-                  rows={4}
-                  maxLength={500}
-                  className={`w-full px-4 sm:px-5 py-3 sm:py-4 border rounded-2xl focus:outline-none text-base sm:text-lg resize-none ${
-                    isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500' : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                  }`}
-                />
-                <p className={`text-xs mt-1 text-right ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  {bio.length}/500 characters
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Wallet Address */}
-          <div className={`rounded-3xl shadow-xl p-5 sm:p-8 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-            <h2 className={`text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              <span className="text-2xl sm:text-3xl">💳</span>
-              Donation Wallet
-            </h2>
-            <div>
-              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                Wallet Address (Base Network)
-              </label>
-              <input
-                type="text"
-                value={walletAddress}
-                onChange={(e) => { setWalletAddress(e.target.value); validateWallet(e.target.value); }}
-                placeholder="0x..."
-                className={`w-full px-4 sm:px-5 py-3 sm:py-4 border rounded-2xl focus:outline-none text-sm sm:text-lg font-mono break-all ${
-                  walletError
-                    ? 'border-red-500 focus:border-red-600 ring-2 ring-red-500/20'
-                    : isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500' : 'bg-white border-blue-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                }`}
-              />
-              {walletError && (
-                <p className="text-red-500 text-xs mt-2 flex items-center gap-1">
-                  <span>⚠️</span> {walletError}
-                </p>
-              )}
-              <p className={`text-xs mt-2 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                This address will receive donations on your public profile
-              </p>
-            </div>
-          </div>
-
-          {/* Social Media */}
-          <div className={`rounded-3xl shadow-xl p-5 sm:p-8 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-            <h2 className={`text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              <span className="text-2xl sm:text-3xl">🌐</span>
-              Social Media
-            </h2>
-            <p className={`text-sm mb-4 sm:mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              Add your social media links to your public profile
-            </p>
-            <div className="space-y-3 sm:space-y-4">
-              {socialFields.map((field) => (
-                <div key={field.key} className="flex items-center gap-3 sm:gap-4">
-                  <span className="text-xl sm:text-2xl w-8 sm:w-10 text-center flex-shrink-0">{field.icon}</span>
-                  <div className="flex-1 min-w-0">
-                    <label className={`block text-xs font-medium mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                      {field.label}
-                    </label>
-                    <input
-                      type="text"
-                      value={socials[field.key]}
-                      onChange={(e) => setSocials({ ...socials, [field.key]: e.target.value })}
-                      placeholder={field.placeholder}
-                      className={`w-full px-3 sm:px-4 py-2 sm:py-3 rounded-xl border focus:outline-none text-sm ${
-                        isDark ? 'bg-gray-800 border-gray-700 text-white placeholder-gray-500 focus:border-blue-500' : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-blue-600'
-                      }`}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Public Profile Preview */}
-          {username && (
-            <div className={`rounded-3xl shadow-xl p-5 sm:p-8 border ${isDark ? 'bg-gradient-to-br from-blue-900/30 to-purple-900/30 border-blue-800' : 'bg-gradient-to-br from-blue-50 to-purple-50 border-blue-200'}`}>
-              <h2 className={`text-xl sm:text-2xl font-bold mb-3 sm:mb-4 flex items-center gap-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                <span className="text-2xl sm:text-3xl">🔗</span>
-                Your Public Profile
-              </h2>
-              <p className={`text-sm mb-3 sm:mb-4 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                Share this link with your supporters:
-              </p>
-              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
-                <div className={`flex-1 px-4 py-3 rounded-xl font-mono text-xs sm:text-sm truncate ${isDark ? 'bg-gray-900 text-gray-300 border border-gray-700' : 'bg-white text-gray-700 border border-gray-200'}`}>
-                  {getPublicProfileUrl()}
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(getPublicProfileUrl());
-                      setMessage('✅ Link copied!');
-                      setMessageType('success');
-                      setTimeout(() => setMessage(''), 2000);
-                    }}
-                    className="flex-1 sm:flex-none px-4 sm:px-6 py-3 rounded-xl font-medium transition-all hover:scale-105 bg-blue-600 hover:bg-blue-700 text-white text-sm sm:text-base"
-                  >
-                    📋 Copy
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => window.open(getPublicProfileUrl(), '_blank')}
-                    className={`flex-1 sm:flex-none px-4 sm:px-6 py-3 rounded-xl font-medium transition-all hover:scale-105 text-sm sm:text-base ${isDark ? 'bg-gray-800 hover:bg-gray-700 text-gray-300' : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-200'}`}
-                  >
-                    🔗 View
-                  </button>
-                  {/* Show Tutorial Again */}
-<button
-  onClick={() => {
-    localStorage.removeItem('hasSeenTutorial')
-    // فقط یک پیام نشون بده
-    setTimeout(() => {
-      window.location.reload()
-    }, 500)
-  }}
-  className={`w-full text-left px-4 py-3 rounded-2xl transition-colors flex items-center gap-3 ${
-    isDark ? 'text-gray-300 hover:bg-gray-800' : 'text-gray-700 hover:bg-blue-50'
-  }`}
->
-  <span className="text-2xl">🎓</span>
-  <span className="font-semibold">Show Tutorial Again</span>
-</button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Security */}
-          <div className={`rounded-3xl shadow-xl p-5 sm:p-8 border ${isDark ? 'bg-gray-900 border-gray-800' : 'bg-white border-blue-100'}`}>
-            <h2 className={`text-xl sm:text-2xl font-bold mb-4 sm:mb-6 flex items-center gap-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              <span className="text-2xl sm:text-3xl">🔒</span>
-              Security
-            </h2>
-            <div className="space-y-3 sm:space-y-4">
-              <div className={`p-4 sm:p-6 rounded-2xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div>
-                    <p className={`font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      Change Password
-                    </p>
-                    <p className={`text-xs sm:text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                      Update your account password
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleResetPassword}
-                    className={`w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 rounded-2xl text-xs sm:text-sm font-semibold transition-all hover:scale-105 ${isDark ? 'bg-yellow-600 hover:bg-yellow-700 text-white' : 'bg-yellow-500 hover:bg-yellow-600 text-white'}`}
-                  >
-                    Reset Password
-                  </button>
-                </div>
-              </div>
-
-              <div className={`p-4 sm:p-6 rounded-2xl ${isDark ? 'bg-red-900/20 border border-red-900/50' : 'bg-red-50 border border-red-200'}`}>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div>
-                    <p className={`font-semibold mb-1 ${isDark ? 'text-red-400' : 'text-red-700'}`}>
-                      Sign Out
-                    </p>
-                    <p className={`text-xs sm:text-sm ${isDark ? 'text-red-300/70' : 'text-red-600'}`}>
-                      Sign out from your account
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className={`w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 rounded-2xl text-xs sm:text-sm font-semibold transition-all hover:scale-105 ${isDark ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-500 hover:bg-red-600 text-white'}`}
-                  >
-                    Sign Out
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-            <button
-              type="submit"
-              disabled={saving || !!usernameError || !!walletError}
-              className={`flex-1 font-semibold py-3 sm:py-4 rounded-2xl text-base sm:text-lg transition-all duration-300 hover:scale-105 disabled:hover:scale-100 disabled:opacity-50 ${
-                isDark
-                  ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-700 disabled:to-gray-700 text-white'
-                  : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:from-gray-400 disabled:to-gray-400 text-white'
-              } shadow-lg`}
-            >
-              {saving ? (
-                <span className="flex items-center justify-center gap-2">
-                  <span className="animate-spin">⏳</span>
-                  Saving...
-                </span>
-              ) : '💾 Save Changes'}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className={`px-6 sm:px-8 py-3 sm:py-4 rounded-2xl text-base sm:text-lg font-medium transition-all hover:scale-105 ${
-                isDark ? 'border border-gray-700 hover:bg-gray-800 text-gray-300' : 'border border-gray-300 hover:bg-gray-50 text-gray-700'
-              }`}
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-
-        <div className={`mt-8 sm:mt-12 text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-          <p className="text-xs sm:text-sm">
-            Powered by <span className="font-semibold text-blue-500">PayOnBase24</span> • Built on Base Network
-          </p>
-        </div>
-      </div>
-    </div>
-  );
 }

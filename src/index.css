@@ -4,6 +4,7 @@
 
 body {
   background-color: #f8fafc;
+  overflow-y: scroll;
 }
 @keyframes blob {
   0% { transform: translate(0px, 0px) scale(1); }

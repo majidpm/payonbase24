@@ -5,20 +5,25 @@ import { useTheme } from '../contexts/ThemeContext';
 import { handleAppError, showSuccess } from '../lib/errorHandler';
 import { checkRateLimit } from '../lib/rateLimiter';
 import { celebrateSuccess } from '../lib/celebrations';
+import { useWallet } from '../hooks/useWallet';
+import { usePrivy } from '@privy-io/react-auth';
+import { useAutoProfile } from '../hooks/useAutoProfile';
 
 export default function Create() {
   const { isDark } = useTheme();
   const navigate = useNavigate();
-  const [userId, setUserId] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const { address, isConnected, connectWallet } = useWallet();
+  const { authenticated, ready } = usePrivy();
+  const { profile, loading: profileLoading } = useAutoProfile();
+  
   const [loading, setLoading] = useState(true);
-const [emailStatus, setEmailStatus] = useState('pending');
+  const [emailStatus, setEmailStatus] = useState('pending');
 
   const [form, setForm] = useState({
     title: '',
     description: '',
     amount: '',
-    fixedAmount: false,  // اگه true باشه، فقط همون مبلغ قبول میشه
+    fixedAmount: false,
     wallet_address: '',
     useProfileWallet: true,
     hasExpiry: false,
@@ -32,33 +37,29 @@ const [emailStatus, setEmailStatus] = useState('pending');
   const [createdLink, setCreatedLink] = useState(null);
   const [sendingEmail, setSendingEmail] = useState(false);
 
+  // چک authentication با Privy
   useEffect(() => {
-    loadProfile();
-  }, []);
-
-  async function loadProfile() {
-    setLoading(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      setUserId(user.id);
-
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
-
-      setProfile(profileData);
-      if (profileData?.wallet_address) {
-        setForm({ ...form, wallet_address: profileData.wallet_address });
-      }
-    } catch (err) {
-      handleAppError(err, 'loadProfile');
-    } finally {
-      setLoading(false);
+    if (ready && !authenticated) {
+      navigate('/auth');
     }
-  }
+  }, [ready, authenticated, navigate]);
+
+  // وقتی پروفایل لود شد، loading رو false کن
+  useEffect(() => {
+    if (profile && !profileLoading) {
+      setLoading(false);
+      if (profile.wallet_address) {
+        setForm(prev => ({ ...prev, wallet_address: profile.wallet_address }));
+      }
+    }
+  }, [profile, profileLoading]);
+
+  // اگه wallet وصل شد و profile wallet نداره، از wallet address استفاده کن
+  useEffect(() => {
+    if (isConnected && address && !profile?.wallet_address && form.useProfileWallet) {
+      setForm(prev => ({ ...prev, wallet_address: address }));
+    }
+  }, [isConnected, address, profile]);
 
   function validateForm() {
     const errs = {};
@@ -93,7 +94,13 @@ const [emailStatus, setEmailStatus] = useState('pending');
   }
 
   async function createLink() {
-    if (!validateForm()) return;
+    if (!validateForm() || !profile) {
+      console.error('❌ Validation failed or no profile');
+      return;
+    }
+
+    console.log('🔍 Create: Starting link creation...');
+    console.log('🔍 Create: Profile:', profile);
 
     const rateLimit = await checkRateLimit('create-payment');
     if (!rateLimit.allowed) {
@@ -113,21 +120,29 @@ const [emailStatus, setEmailStatus] = useState('pending');
       }
 
       const finalWallet = form.useProfileWallet 
-        ? profile?.wallet_address 
+        ? (profile?.wallet_address || address)
         : form.wallet_address.trim();
 
       if (!finalWallet) {
         handleAppError({ 
-          message: 'Please add a wallet address in Settings or enter one below' 
+          message: 'Please add a wallet address in Settings, connect your wallet, or enter one below' 
         }, 'createLink');
         setCreating(false);
         return;
       }
 
+      console.log('🔍 Create: Inserting payment with:', {
+        user_id: profile.id,
+        slug,
+        title: form.title.trim(),
+        wallet_address: finalWallet
+      });
+
+      // استفاده از profile.id
       const { data, error } = await supabase
         .from('payment')
         .insert({
-          user_id: userId,
+          user_id: profile.id,
           slug,
           title: form.title.trim(),
           description: form.description.trim() || null,
@@ -140,7 +155,12 @@ const [emailStatus, setEmailStatus] = useState('pending');
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Create: Insert error:', error);
+        throw error;
+      }
+
+      console.log('✅ Create: Link created successfully:', data);
 
       const linkUrl = `${window.location.origin}/pay/${slug}`;
       setCreatedLink({ ...data, url: linkUrl });
@@ -148,78 +168,73 @@ const [emailStatus, setEmailStatus] = useState('pending');
       showSuccess(`Payment link created! ${rateLimit.remaining} remaining this hour`);
       celebrateSuccess();
 
-// اگه ارسال ایمیل فعال بود
-if (form.sendEmail && form.recipient_email.trim()) {
-  // اول لینک رو بدون email status نشون بده
-  setCreatedLink({ ...data, url: linkUrl });
-  setEmailStatus('pending');
-  
-  const updatedLink = await sendPaymentEmail(data, linkUrl);
-  
-  if (updatedLink) {
-    setEmailStatus('sent');
-    showSuccess('Link created and email sent! 📧');
-  } else {
-    setEmailStatus('failed');
-    showSuccess('Link created! Email failed - you can copy and send manually.');
-  }
-} else {
-  setCreatedLink({ ...data, url: linkUrl });
-  setEmailStatus('sent'); // یا 'none' اگه ایمیل درخواست نشده
-  showSuccess(`Payment link created! ${rateLimit.remaining} remaining this hour`);
-}
+      // اگه ارسال ایمیل فعال بود
+      if (form.sendEmail && form.recipient_email.trim()) {
+        setEmailStatus('pending');
+        
+        const updatedLink = await sendPaymentEmail(data, linkUrl);
+        
+        if (updatedLink) {
+          setEmailStatus('sent');
+          showSuccess('Link created and email sent! 📧');
+        } else {
+          setEmailStatus('failed');
+          showSuccess('Link created! Email failed - you can copy and send manually.');
+        }
+      } else {
+        setEmailStatus('sent');
+      }
     } catch (err) {
+      console.error('❌ Create: Exception:', err);
       handleAppError(err, 'createLink');
     } finally {
       setCreating(false);
     }
   }
 
-async function sendPaymentEmail(link, linkUrl) {
-  setSendingEmail(true);
-  try {
-    const { data, error } = await supabase.functions.invoke('send-payment-email', {
-      body: {
-        to: link.recipient_email,
-        linkUrl: linkUrl,
-        title: link.title,
-        amount: link.amount,
-        description: link.description,
-        senderName: profile?.display_name || profile?.username || 'Someone',
-        expiresAt: link.expires_at
+  async function sendPaymentEmail(link, linkUrl) {
+    setSendingEmail(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-payment-email', {
+        body: {
+          to: link.recipient_email,
+          linkUrl: linkUrl,
+          title: link.title,
+          amount: link.amount,
+          description: link.description,
+          senderName: profile?.display_name || profile?.username || 'Someone',
+          expiresAt: link.expires_at
+        }
+      });
+
+      if (error) {
+        console.error('Email function error:', error);
+        throw error;
       }
-    });
 
-    if (error) {
-      console.error('Email function error:', error);
-      throw error;
+      if (!data?.success) {
+        throw new Error(data?.error || 'Email sending failed');
+      }
+
+      const { data: updatedLink, error: updateError } = await supabase
+        .from('payment')
+        .update({ email_sent_at: new Date().toISOString() })
+        .eq('id', link.id)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error('Update error:', updateError);
+      }
+
+      return updatedLink || { ...link, email_sent_at: new Date().toISOString() };
+    } catch (err) {
+      console.error('Email send failed:', err);
+      return null;
+    } finally {
+      setSendingEmail(false);
     }
-
-    if (!data?.success) {
-      throw new Error(data?.error || 'Email sending failed');
-    }
-
-    // ثبت زمان ارسال ایمیل در database
-    const { data: updatedLink, error: updateError } = await supabase
-      .from('payment')
-      .update({ email_sent_at: new Date().toISOString() })
-      .eq('id', link.id)
-      .select()
-      .single();
-
-    if (updateError) {
-      console.error('Update error:', updateError);
-    }
-
-    // ✅ برگرداندن لینک آپدیت شده
-    return updatedLink || { ...link, email_sent_at: new Date().toISOString() };
-  } catch (err) {
-    console.error('Email send failed:', err);
-    return null;
-  } finally {
-    setSendingEmail(false);
   }
-}
 
   function copyLink() {
     if (createdLink) {
@@ -234,7 +249,7 @@ async function sendPaymentEmail(link, linkUrl) {
       description: '',
       amount: '',
       fixedAmount: false,
-      wallet_address: profile?.wallet_address || '',
+      wallet_address: profile?.wallet_address || address || '',
       useProfileWallet: true,
       hasExpiry: false,
       expires_days: '7',
@@ -242,7 +257,7 @@ async function sendPaymentEmail(link, linkUrl) {
       sendEmail: false
     });
     setCreatedLink(null);
-    setEmailStatus('pending');  // ← اضافه کن
+    setEmailStatus('pending');
     setErrors({});
   }
 
@@ -266,7 +281,7 @@ async function sendPaymentEmail(link, linkUrl) {
     </p>
   ) : null;
 
-  if (loading) {
+  if (loading || profileLoading) {
     return (
       <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
         <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-600 border-t-transparent"></div>
@@ -277,7 +292,7 @@ async function sendPaymentEmail(link, linkUrl) {
   return (
     <div className={`min-h-screen ${isDark ? 'bg-gray-950' : 'bg-blue-50'}`}>
       <div className="p-4 sm:p-6 md:p-8">
-        <div className="max-w-3xl mx-auto">
+       <div className="max-w-2xl mx-auto px-4 py-6">
           {/* Header */}
           <div className="mb-6 sm:mb-8">
             <h1 className={`text-2xl sm:text-4xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -350,44 +365,45 @@ async function sendPaymentEmail(link, linkUrl) {
                 </div>
               </div>
 
-{createdLink.recipient_email && (
-  <div className={`p-4 rounded-xl mb-6 transition-all duration-300 ${
-    emailStatus === 'sent'
-      ? isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'
-      : emailStatus === 'failed'
-      ? isDark ? 'bg-yellow-900/20 border border-yellow-800' : 'bg-yellow-50 border border-yellow-200'
-      : isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'
-  }`}>
-    {emailStatus === 'sent' ? (
-      <p className={`text-sm font-medium ${isDark ? 'text-green-400' : 'text-green-700'}`}>
-        ✅ Email sent to: {createdLink.recipient_email}
-      </p>
-    ) : emailStatus === 'failed' ? (
-      <div>
-        <p className={`text-sm font-medium mb-2 ${isDark ? 'text-yellow-400' : 'text-yellow-700'}`}>
-          ⚠️ Email not sent - you can copy the link and send manually
-        </p>
-        <button
-          onClick={() => {
-            window.location.href = `mailto:${createdLink.recipient_email}?subject=Payment Request: ${createdLink.title}&body=Hi, please pay using this link: ${createdLink.url}`;
-          }}
-          className={`px-4 py-2 rounded-lg text-xs font-medium ${
-            isDark ? 'bg-yellow-800 text-yellow-200 hover:bg-yellow-700' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
-          }`}
-        >
-          📧 Open Email Client
-        </button>
-      </div>
-    ) : (
-      <div className="flex items-center gap-2">
-        <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
-        <p className={`text-sm font-medium ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
-          Sending email to: {createdLink.recipient_email}...
-        </p>
-      </div>
-    )}
-  </div>
-)}
+              {createdLink.recipient_email && (
+                <div className={`p-4 rounded-xl mb-6 transition-all duration-300 ${
+                  emailStatus === 'sent'
+                    ? isDark ? 'bg-green-900/20 border border-green-800' : 'bg-green-50 border border-green-200'
+                    : emailStatus === 'failed'
+                    ? isDark ? 'bg-yellow-900/20 border border-yellow-800' : 'bg-yellow-50 border border-yellow-200'
+                    : isDark ? 'bg-blue-900/20 border border-blue-800' : 'bg-blue-50 border border-blue-200'
+                }`}>
+                  {emailStatus === 'sent' ? (
+                    <p className={`text-sm font-medium ${isDark ? 'text-green-400' : 'text-green-700'}`}>
+                      ✅ Email sent to: {createdLink.recipient_email}
+                    </p>
+                  ) : emailStatus === 'failed' ? (
+                    <div>
+                      <p className={`text-sm font-medium mb-2 ${isDark ? 'text-yellow-400' : 'text-yellow-700'}`}>
+                        ⚠️ Email not sent - you can copy the link and send manually
+                      </p>
+                      <button
+                        onClick={() => {
+                          window.location.href = `mailto:${createdLink.recipient_email}?subject=Payment Request: ${createdLink.title}&body=Hi, please pay using this link: ${createdLink.url}`;
+                        }}
+                        className={`px-4 py-2 rounded-lg text-xs font-medium ${
+                          isDark ? 'bg-yellow-800 text-yellow-200 hover:bg-yellow-700' : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                        }`}
+                      >
+                        📧 Open Email Client
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
+                      <p className={`text-sm font-medium ${isDark ? 'text-blue-400' : 'text-blue-700'}`}>
+                        Sending email to: {createdLink.recipient_email}...
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={resetForm}
@@ -495,13 +511,13 @@ async function sendPaymentEmail(link, linkUrl) {
                     <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
                       💼 Receiving Wallet
                     </label>
-                    {profile?.wallet_address && (
+                    {(profile?.wallet_address || isConnected) && (
                       <button
                         type="button"
                         onClick={() => setForm({ 
                           ...form, 
                           useProfileWallet: !form.useProfileWallet,
-                          wallet_address: !form.useProfileWallet ? profile.wallet_address : ''
+                          wallet_address: !form.useProfileWallet ? (profile?.wallet_address || address) : ''
                         })}
                         className={toggleClass(form.useProfileWallet)}
                       >
@@ -512,13 +528,13 @@ async function sendPaymentEmail(link, linkUrl) {
                     )}
                   </div>
 
-                  {form.useProfileWallet && profile?.wallet_address ? (
+                  {form.useProfileWallet && (profile?.wallet_address || address) ? (
                     <div className={`p-3 rounded-xl ${isDark ? 'bg-gray-800' : 'bg-gray-50'}`}>
                       <p className={`text-xs mb-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                        Using wallet from Settings
+                        {profile?.wallet_address ? 'Using wallet from Settings' : 'Using connected wallet'}
                       </p>
                       <p className={`font-mono text-xs break-all ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                        {profile.wallet_address}
+                        {profile?.wallet_address || address}
                       </p>
                     </div>
                   ) : (
