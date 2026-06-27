@@ -1,5 +1,5 @@
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { parseUnits, stringToHex } from 'viem'
+import { parseUnits, encodeFunctionData } from 'viem'
 import { base } from 'wagmi/chains'
 
 // ✅ Builder Code از Base
@@ -24,27 +24,18 @@ const ERC20_ABI = [
 
 // ✅ ساخت dataSuffix بر اساس ERC-8021
 function buildDataSuffix(builderCode) {
-  // 1. تبدیل builder code به hex با استفاده از stringToHex
-  const hexCode = stringToHex(builderCode).slice(2)
+  const hexCode = Array.from(builderCode).map(c => 
+    c.charCodeAt(0).toString(16).padStart(2, '0')
+  ).join('')
   
-  // 2. طول builder code در hex (2 کاراکتر)
   const lengthHex = builderCode.length.toString(16).padStart(2, '0')
-  
-  // 3. 8 بار 8021 (ERC-8021 identifier)
   const erc8021 = '8021'.repeat(8)
   
-  // ✅ فرمت نهایی: length + hex_code + 00 + identifier
-  const dataSuffix = `0x${lengthHex}${hexCode}00${erc8021}`
-  
-  console.log('🔧 Builder Code:', builderCode)
-  console.log('🔧 Length:', builderCode.length, '(hex:', lengthHex + ')')
-  console.log('🔧 Hex Code:', hexCode)
-  console.log('🔧 Full Suffix:', dataSuffix)
-  
-  return dataSuffix
+  return `${lengthHex}${hexCode}00${erc8021}`
 }
 
 const DATA_SUFFIX = buildDataSuffix(BUILDER_CODE)
+console.log('🔧 Data Suffix (بدون 0x):', DATA_SUFFIX)
 
 export function useSendUSDC() {
   const { 
@@ -67,18 +58,30 @@ export function useSendUSDC() {
     try {
       const amountInWei = parseUnits(amount.toString(), 6)
 
+      // ✅ خودمون calldata رو encode می‌کنیم
+      const calldata = encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [to, amountInWei]
+      })
+
+      // ✅ اضافه کردن suffix به calldata
+      const fullData = calldata + DATA_SUFFIX
+
       console.log('📤 Sending USDC...')
       console.log('  To:', to)
       console.log('  Amount:', amount)
-      console.log('  Data Suffix:', DATA_SUFFIX)
+      console.log('  Calldata:', calldata)
+      console.log('  Full Data:', fullData)
 
+      // ✅ ارسال با data field مستقیم
       writeContract({
         address: USDC_ADDRESS,
         abi: ERC20_ABI,
         functionName: 'transfer',
         args: [to, amountInWei],
         chainId: base.id,
-        dataSuffix: DATA_SUFFIX
+        data: fullData
       })
     } catch (err) {
       console.error('Send USDC error:', err)
