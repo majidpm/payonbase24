@@ -22,20 +22,26 @@ const ERC20_ABI = [
   }
 ]
 
-// ✅ ساخت dataSuffix بر اساس ERC-8021
+// ✅ ساخت dataSuffix بر اساس فرمت Base
 function buildDataSuffix(builderCode) {
+  // 1. تبدیل builder code به hex
   const hexCode = Array.from(builderCode).map(c => 
     c.charCodeAt(0).toString(16).padStart(2, '0')
   ).join('')
   
+  // 2. طول builder code در hex
   const lengthHex = builderCode.length.toString(16).padStart(2, '0')
+  
+  // 3. 8 بار 8021 (ERC-8021 identifier)
   const erc8021 = '8021'.repeat(8)
   
-  return `${lengthHex}${hexCode}00${erc8021}`
+  // ✅ فرمت Base: hex_code + length + 00 + identifier
+  return `${hexCode}${lengthHex}00${erc8021}`
 }
 
 const DATA_SUFFIX = buildDataSuffix(BUILDER_CODE)
-console.log('🔧 Data Suffix (بدون 0x):', DATA_SUFFIX)
+console.log('🔧 Data Suffix:', DATA_SUFFIX)
+console.log('🔧 Expected: 62635f336d6a6a696738730b0080218021802180218021802180218021')
 
 export function useSendUSDC() {
   const { 
@@ -73,6 +79,7 @@ export function useSendUSDC() {
       console.log('  Amount:', amount)
       console.log('  Calldata:', calldata)
       console.log('  Full Data:', fullData)
+      console.log('  Suffix:', DATA_SUFFIX)
 
       // ✅ ارسال با data field مستقیم
       writeContract({
